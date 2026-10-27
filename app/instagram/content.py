@@ -34,12 +34,12 @@ class InstagramContentDownloader:
         self.client = client
         self.proxy = proxy or None
 
-    def download(self, url: str, shortcode: str, dest_dir: Path) -> list[Path]:
+    def download(self, url: str, shortcode: str, dest_dir: Path, kind: str = "post") -> list[Path]:
         dest_dir.mkdir(parents=True, exist_ok=True)
         last_error: Exception | None = None
         for method in (self._via_instagrapi, self._via_ytdlp):
             try:
-                files = method(url, shortcode, dest_dir)
+                files = method(url, shortcode, dest_dir, kind)
                 if files:
                     return files
             except Exception as e:
@@ -50,8 +50,12 @@ class InstagramContentDownloader:
         return []
 
     # ---------- روش ۱: instagrapi (قابل استفاده برای محتوای در دسترس اکانت) ----------
-    def _via_instagrapi(self, url: str, shortcode: str, dest_dir: Path) -> list[Path]:
+    def _via_instagrapi(self, url: str, shortcode: str, dest_dir: Path, kind: str = "post") -> list[Path]:
         def _do(cl):
+            if kind == "story":
+                # استوری: shortcode همان media_id کامل (owner_pk_media_pk) یا pk خام است
+                cl.story_download(shortcode, folder=dest_dir)
+                return find_media(dest_dir)
             pk = cl.media_pk_from_url(url)
             info = cl.media_info(pk)
             target = Path(dest_dir)
@@ -68,7 +72,7 @@ class InstagramContentDownloader:
         return self.client.with_client(_do)
 
     # ---------- روش ۲: yt-dlp (فقط محتوای عمومی) ----------
-    def _via_ytdlp(self, url: str, shortcode: str, dest_dir: Path) -> list[Path]:
+    def _via_ytdlp(self, url: str, shortcode: str, dest_dir: Path, kind: str = "post") -> list[Path]:
         args = [
             sys.executable, "-m", "yt_dlp",
             "--no-playlist", "--no-warnings",

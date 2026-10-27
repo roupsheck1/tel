@@ -35,7 +35,8 @@ NOW = lambda: int(time.time())  # noqa: E731
 class ContentDownloader(Protocol):
     """قرارداد دریافت محتوا (جدا از پیاده‌سازی اینستاگرام — بخش ۴.۲)."""
 
-    def download(self, url: str, shortcode: str, dest_dir: Path) -> list[Path]: ...
+    def download(self, url: str, shortcode: str, dest_dir: Path,
+                 kind: str = "post") -> list[Path]: ...
 
 
 class DeliverySender(Protocol):
@@ -255,8 +256,12 @@ class DownloadEngine:
         self.d.downloads.set_status(rid, "downloading", started_at=stage_download_start)
         try:
             # --- دریافت محتوا (در نخ جدا برای IO سنگین) ---
+            # request ممکن است dict (از صف) یا sqlite3.Row باشد؛ keys() در هر دو کار می‌کند
+            media_kind = (request["media_kind"]
+                          if "media_kind" in request.keys() else "post") or "post"
             files = await asyncio.to_thread(
-                self.d.downloader.download, request["media_url"], request["shortcode"], dest
+                self.d.downloader.download, request["media_url"], request["shortcode"], dest,
+                media_kind,
             )
             stage_download_end = NOW()
             files = [f for f in files if f and Path(f).exists()]

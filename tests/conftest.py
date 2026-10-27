@@ -41,7 +41,8 @@ class FakeDownloader:
         self.fail = False
         self.calls: list[str] = []
 
-    def download(self, url: str, shortcode: str, dest_dir: Path) -> list[Path]:
+    def download(self, url: str, shortcode: str, dest_dir: Path,
+                 kind: str = "post") -> list[Path]:
         self.calls.append(shortcode)
         if self.fail:
             raise RuntimeError("fake download failure")

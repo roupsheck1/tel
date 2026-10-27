@@ -24,6 +24,100 @@ LINK_RE = re.compile(
     r"https?://(?:www\.)?instagram\.com/(?:[\w.]+/)?(?:p|reel|reels|tv)/([\w-]+)",
     re.IGNORECASE,
 )
+STORY_URL_RE = re.compile(
+    r"https?://(?:www\.)?instagram\.com/stories/[\w.]+/(\d+)",
+    re.IGNORECASE,
+)
+DEEPLINK_ID_RE = re.compile(r"(?:media_id|story_id|id)=(\d{8,})")
+
+# انواع پیام بدون محتوای قابل استخراج (برای این‌ها پیام راهنما نمی‌فرستیم)
+_PLAIN_TYPES = {"text", "like", "placeholder", "animated_media", "action_log",
+                "video_call_action", "privacy_note", "reel_share_reaction"}
+
+
+def _pk_to_code(pk) -> str:
+    """تبدیل pk عددی رسانه به shortcode (همان الگوریتم InstagramIdCodec رسمی)."""
+    num = int(pk)
+    if num == 0:
+        return "A"
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    arr = []
+    while num:
+        num, rem = divmod(num, 64)
+        arr.append(alphabet[rem])
+    return "".join(reversed(arr))
+
+
+def _post_of_code(code: str, kind: str = "post"):
+    path = "reel" if kind == "reel" else "p"
+    return f"https://www.instagram.com/{path}/{code}/", code, kind
+
+
+def _from_xma(x):
+    """استخراج از قالب جدید xma (خروجی xma_clip/xma_media_share/generic_xma)."""
+    url = str(getattr(x, "video_url", "") or "")
+    if url:
+        mt = STORY_URL_RE.search(url)
+        if mt:
+            return url, mt.group(1), "story"
+        mt = LINK_RE.search(url)
+        if mt:
+            kind = "reel" if "reel" in mt.group(0) else "post"
+            return mt.group(0), mt.group(1), kind
+        mt = DEEPLINK_ID_RE.search(url)
+        if mt:
+            if "story" in url:
+                return url, mt.group(1), "story"
+            return _post_of_code(_pk_to_code(mt.group(1)))
+    fbid = getattr(x, "preview_media_fbid", None)
+    if fbid and str(fbid).isdigit():
+        return _post_of_code(_pk_to_code(fbid))
+    return None
+
+
+def _from_xma_raw(it: dict, mode: str):
+    """استخراج از دیکته خام raw_xma (مثل xma_story_share و xma_profile)."""
+    target = str(it.get("target_url") or "")
+    if target:
+        mt = STORY_URL_RE.search(target)
+        if mt:
+            return target, mt.group(1), "story"
+        mt = LINK_RE.search(target)
+        if mt:
+            kind = "reel" if "reel" in mt.group(0) else "post"
+            return mt.group(0), mt.group(1), kind
+        mt = DEEPLINK_ID_RE.search(target)
+        if mt:
+            if mode == "story" or "story" in target:
+                return target, mt.group(1), "story"
+            return _post_of_code(_pk_to_code(mt.group(1)))
+    fbid = it.get("preview_media_fbid")
+    if fbid and str(fbid).isdigit() and mode in ("story", "media"):
+        # برای پروفایل، pk احتمالی کاربر است و نباید به پست تبدیل شود
+        if mode == "story":
+            return f"https://www.instagram.com/stories/user/{fbid}/", str(fbid), "story"
+        return _post_of_code(_pk_to_code(fbid))
+    return None
+
+
+def _story_of_share(d: dict):
+    """استخراج استوری از story_share کلاسیک؛ خروجی (url, media_id, 'story')."""
+    media_id = str(d.get("media_id") or "")
+    if "_" not in media_id:
+        reel_id = str(d.get("reel_id") or "")
+        story_mid = str(d.get("story_media_id") or "")
+        if reel_id and story_mid:
+            media_id = f"{reel_id}_{story_mid}"
+        elif not media_id.isdigit():
+            media_id = ""
+    if not media_id:
+        return None
+    parts = media_id.split("_")
+    if len(parts) == 2:
+        url = f"https://www.instagram.com/stories/{parts[0]}/{parts[1]}/"
+    else:
+        url = f"https://www.instagram.com/stories/user/{parts[0]}/"
+    return url, media_id, "story"
 
 
 def _dump_message(m) -> str:
@@ -42,24 +136,79 @@ def _dump_message(m) -> str:
 
 
 def extract_post(m) -> tuple[str, str, str] | None:
-    """یافتن پست/ریلز در پیام؛ خروجی (url, shortcode, kind)."""
-    # ۱) پست/ریلز اشتراکی با دکمه Share
-    for field, kind in (("media_share", "post"), ("clip", "reel"), ("reel_share", "reel")):
+    """یافتن پست/ریلز/استوری در پیام؛ خروجی (url, shortcode, kind).
+
+    قالب‌های پشتیبانی‌شده:
+    - media_share / clip: پست و ریلز کلاسیک (شیء Media با code)
+    - reel_share / felix_share: دیکته با media.code
+    - xma_share / generic_xma: قالب جدید دکمه Share (xma_clip و xma_media_share)
+    - story_share: استوری کلاسیک (media_id = owner_pk_media_pk)
+    - visual_media: عکس/ویدیوی ارسالی مستقیم (media_id = pk)
+    - raw_xma: دیکته خام xma_story_share و بقیه
+    - لینک داخل متن و کل محتوای سریال‌شده پیام
+    """
+    # ۱) پست/ریلز کلاسیک: media_share و clip (شیء Media با code)
+    for field, kind in (("media_share", "post"), ("clip", "reel")):
         obj = getattr(m, field, None)
-        code = getattr(obj, "code", None) if obj is not None else None
+        code = getattr(obj, "code", None)
         if code:
-            return f"https://www.instagram.com/{'reel' if kind == 'reel' else 'p'}/{code}/", code, kind
-    # ۲) لینک داخل متن
+            real_kind = "reel" if getattr(obj, "media_type", 1) == 2 else kind
+            return _post_of_code(code, real_kind)
+    # ۲) reel_share و felix_share (دیکته با media.code)
+    for field, kind in (("reel_share", "reel"), ("felix_share", "post")):
+        d = getattr(m, field, None)
+        if isinstance(d, dict):
+            media = d.get("media")
+            code = media.get("code") if isinstance(media, dict) else None
+            if code:
+                return _post_of_code(code, kind)
+    # ۳) xma_share و generic_xma — قالب جدید دکمه Share (پست/ریلز/کلیپ)
+    for field in ("xma_share", "generic_xma"):
+        val = getattr(m, field, None)
+        items = val if isinstance(val, list) else ([val] if val else [])
+        for x in items:
+            found = _from_xma(x)
+            if found:
+                return found
+    # ۴) استوری: story_share کلاسیک
+    d = getattr(m, "story_share", None)
+    if isinstance(d, dict):
+        found = _story_of_share(d)
+        if found:
+            return found
+    # ۵) visual_media: عکس/ویدیوی ارسالی مستقیم در چت (media_id = pk)
+    vm_media = getattr(getattr(m, "visual_media", None), "media", None)
+    vm_mid = getattr(vm_media, "media_id", None)
+    if vm_mid:
+        return _post_of_code(_pk_to_code(vm_mid))
+    # ۶) لینک داخل متن
     text = getattr(m, "text", None) or ""
+    mt = STORY_URL_RE.search(text)
+    if mt:
+        return text.strip(), mt.group(1), "story"
     mt = LINK_RE.search(text)
     if mt:
         kind = "reel" if "reel" in mt.group(0) else "post"
         return mt.group(0), mt.group(1), kind
-    # ۳) جست‌وجو در کل محتوا (xma، link و ...)
-    mt = LINK_RE.search(_dump_message(m))
+    # ۷) جست‌وجو در کل محتوای سریال‌شده (xma، link و ...)
+    dump = _dump_message(m)
+    mt = STORY_URL_RE.search(dump)
+    if mt:
+        return mt.group(0), mt.group(1), "story"
+    mt = LINK_RE.search(dump)
     if mt:
         kind = "reel" if "reel" in mt.group(0) else "post"
         return mt.group(0), mt.group(1), kind
+    # ۸) raw_xma پشتیبان (مثل xma_story_share خام که به شیء تبدیل نشده)
+    raw = getattr(m, "raw_xma", None)
+    if isinstance(raw, dict):
+        for key, val in raw.items():
+            for it in (val if isinstance(val, list) else [val] if val else []):
+                if isinstance(it, dict):
+                    mode = "story" if "story" in key else ("profile" if "profile" in key else "media")
+                    found = _from_xma_raw(it, mode)
+                    if found:
+                        return found
     return None
 
 
@@ -172,6 +321,7 @@ class InstagramInbox:
 
     # ---------- منطق پیام ----------
     def _handle_message(self, thread, m, username: str) -> bool:
+        item_type = str(getattr(m, "item_type", "") or "")
         link = self.links.find_by_ig(username)
         if link is None:
             # کاربر متصل نیست → کد اتصال (بخش ۵.۲)
@@ -183,15 +333,24 @@ class InstagramInbox:
         post = extract_post(m)
         if not post:
             text = getattr(m, "text", None) or ""
+            log.info("پیام از @%s قابل استخراج نبود (نوع: %s، متن: %s)",
+                     username, item_type or "?", (text or "").replace("\n", " ")[:60])
             if text.strip():
                 self._send_dm(
                     thread.id,
                     "حسابت وصل است ✅\nپست یا ریلز را همین‌جا بفرست (Share) یا لینکش را بفرست "
                     "تا در تلگرام برایت دانلود شود."
                 )
+            elif item_type and item_type not in _PLAIN_TYPES:
+                # پیامِ رسانه‌ایِ ناشناخته → راهنمای صریح به‌جای سکوت
+                self._send_dm(
+                    thread.id,
+                    "این نوع پیام را نتونستم بخونم 🤔\n"
+                    "بهترین راه: لینک پست/ریلز/استوری را به‌صورت متن همین‌جا بفرست."
+                )
             return False
         url, shortcode, kind = post
-        log.info("درخواست جدید از @%s: %s", username, url)
+        log.info("درخواست جدید از @%s: %s [نوع: %s]", username, url, kind)
         # ثبت آخرین فعالیت (بخش ۵.۳)
         self.links.touch_activity(link["telegram_id"])
         # تحویل به موتور دانلود در حلقه رویداد تلگرام
