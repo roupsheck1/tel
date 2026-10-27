@@ -105,7 +105,9 @@ class InstagramInbox:
 
     def scan_once(self) -> int:
         """یک دور کامل بررسی صندوق؛ خروجی تعداد پیام جدید پردازش‌شده."""
-        threads = self.client.with_client(lambda cl: cl.direct_threads(20, 20))
+        # نکته: امضای instagrapi مقدار «amount» و سپس «selected_filter» متنی است؛
+        # «(20, 20)» باعث خطای ValueError می‌شد و کل پایش از کار می‌افتاد.
+        threads = self.client.with_client(lambda cl: cl.direct_threads(20))
         items = [(t, False) for t in threads]
         try:
             pending = self.client.with_client(
@@ -125,13 +127,21 @@ class InstagramInbox:
                 self.last_error = str(e)
                 log.exception("خطای پردازش گفتگو: %s", e)
         self.last_scan_at = int(time.time())
+        # نخستین پایش فقط برای خط‌گذاری پایه (baseline) است؛
+        # بدون True شدن این پرچم، هیچ پیام جدیدی هرگز پردازش نمی‌شد.
+        self.first_scan_done = True
         return processed
 
     def _handle_thread(self, thread, is_pending: bool, me: str) -> int:
         if not thread.messages:
             return 0
         # فقط گفتگوهای یک‌نفره (بدون گروه)
-        users = getattr(thread, "users", None) or []
+        # در گفتگوهای pending فهرست users ممکن است خالی باشد و فرستنده در inviter باشد.
+        users = list(getattr(thread, "users", None) or [])
+        if not users:
+            inviter = getattr(thread, "inviter", None)
+            if inviter is not None:
+                users = [inviter]
         if len(users) != 1:
             return 0
         seen = self._seen_row(str(thread.id))
@@ -202,7 +212,9 @@ class InstagramInbox:
     # ---------- ابزار ----------
     def _send_dm(self, thread_id: str, text: str) -> None:
         try:
-            self.client.with_client(lambda cl: cl.direct_send(text, [thread_id]))
+            # نکته: آرگومان دومِ موقعیتیِ direct_send همان user_ids است؛
+            # باید thread_ids به‌صورت کلیدواژه پاس شود وگرنه پیام به مقصد اشتباه می‌رود.
+            self.client.with_client(lambda cl: cl.direct_send(text, thread_ids=[thread_id]))
         except Exception as e:
             log.warning("ارسال پیام دایرکت ناموفق: %s", e)
 
