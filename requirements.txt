@@ -1,0 +1,5 @@
+aiogram>=3.13,<4
+instagrapi>=3.0
+yt-dlp>=2025.1.1
+pydantic>=2.7
+pydantic-settings>=2.3
