@@ -93,3 +93,71 @@ def test_unlink_preserves_subscription(services):
     # اشتراک پس از قطع اتصال هم باید موجود باشد (بخش ۵.۴)
     assert services.subs_repo.active_of(USER1) is not None
     assert services.links_repo.get_active(USER1) is None
+
+
+# ---------- ارقام فارسی و مصونیت کد (رفع باگ‌های اتصال) ----------
+def test_link_with_persian_digits(services):
+    """کاربر کد را با صفحه‌کلید فارسی (۴۸۳۹۲۰) می‌فرستد → باید وصل شود."""
+    services.user_service.register(USER1, "ali", None)
+    code = services.links_repo.create_code("alice_ig", ttl_seconds=600)
+    fa = code.translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"))
+    ok, ig = services.links_repo.link(fa, USER1)
+    assert ok and ig == "alice_ig"
+    assert services.links_repo.get_active(USER1)["ig_username"] == "alice_ig"
+
+
+def test_link_with_arabic_digits_and_whitespace(services):
+    services.user_service.register(USER1, "ali", None)
+    code = services.links_repo.create_code("ahmad_ig", ttl_seconds=600)
+    ar = code.translate(str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩"))
+    ok, ig = services.links_repo.link(f" {ar} ", USER1)
+    assert ok and ig == "ahmad_ig"
+
+
+def test_failed_link_does_not_burn_code(services):
+    """تلاش ناموفق نباید کدِ معتبر را مصرف کند (قبلاً کد می‌سوخت)."""
+    services.user_service.register(USER1, "a", None)
+    services.user_service.register(USER2, "b", None)
+    c1 = services.links_repo.create_code("dave_ig")
+    assert services.links_repo.link(c1, USER1)[0]
+    c2 = services.links_repo.create_code("dave_ig")  # کد تازه (c1 استفاده شده)
+    # اکانت به USER1 وصل است → تلاش USER2 ناموفق؛ کد نباید بسوزد
+    ok, _msg = services.links_repo.link(c2, USER2)
+    assert ok is False
+    services.links_repo.unlink_by_admin(USER1)
+    ok2, ig = services.links_repo.link(c2, USER2)
+    assert ok2 and ig == "dave_ig"
+
+
+def test_relink_same_pair_is_idempotent(services):
+    """اتصال دوباره همان جفت (کاربر/اکانت یکسان) → موفقیت بدون خطا."""
+    services.user_service.register(USER1, "a", None)
+    assert services.links_repo.create_code("erin_ig") and \
+        services.links_repo.link(services.links_repo.create_code("erin_ig"), USER1)[0]
+    # یک کد معتبر دیگر برای همان اکانت (مثلاً از پیام در انتظار پیش از اتصال)
+    code2 = "000999"
+    services.db.execute(
+        "INSERT INTO link_codes (code, ig_username, expires_at, created_at) VALUES (?,?,?,?)",
+        (code2, "erin_ig", int(time.time()) + 600, int(time.time())),
+    )
+    ok, ig = services.links_repo.link(code2, USER1)
+    assert ok and ig == "erin_ig"
+
+
+def test_normalize_digits_util():
+    from app.utils import normalize_digits
+    assert normalize_digits("۴۸۳۹۲۰") == "483920"
+    assert normalize_digits("٤٨٣٩٢٠") == "483920"
+    assert normalize_digits("12۳۴") == "1234"
+    assert normalize_digits("کد ۱۲۳") == "کد 123"
+    assert normalize_digits("") == ""
+    assert normalize_digits("no digits") == "no digits"
+
+
+def test_db_file_absolute_and_relative():
+    from pathlib import Path
+    from app.config import Settings
+    s = Settings(DATABASE_PATH="/mnt/vol/bot.db", STORAGE_DIR="storage", _env_file=None)
+    assert s.db_file == Path("/mnt/vol/bot.db")
+    s2 = Settings(DATABASE_PATH="bot.db", STORAGE_DIR="storage", _env_file=None)
+    assert s2.db_file == Path("storage/bot.db")

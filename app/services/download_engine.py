@@ -81,6 +81,11 @@ class DownloadEngine:
         self._scheduler_task: asyncio.Task | None = None
         self._cleanup_task: asyncio.Task | None = None
         self._workers: set[asyncio.Task] = set()
+        # شناسه درخواست‌هایی که تسکشان همین الان ساخته شده ولی هنوز وضعیتشان
+        # در پایگاه داده «downloading» نشده است. بدون این مجموعه، حلقه
+        # زمان‌بند بی‌هیچ نقطه await همان درخواست را دوباره و دوباره برمی‌داشت،
+        # بی‌نهایت تسک تکراری می‌ساخت و حلقه رویداد (و کل ربات) فریز می‌شد.
+        self._inflight: set[int] = set()
         self._wake = asyncio.Event()
         self._send_sem = asyncio.Semaphore(int(deps.settings.get("capacity.max_active_sends")))
         self._stop_broadcast: bool = False
@@ -187,7 +192,10 @@ class DownloadEngine:
                     continue
                 task = asyncio.create_task(self._process(picked))
                 self._workers.add(task)
-                task.add_done_callback(self._workers.discard)
+                self._inflight.add(picked["id"])
+                task.add_done_callback(
+                    lambda t, rid=picked["id"]: (self._workers.discard(t), self._inflight.discard(rid))
+                )
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -209,6 +217,9 @@ class DownloadEngine:
         window = int(self.d.settings.get("downloads.processing_window"))
         candidates = []
         for r in queued:
+            # درخواستی که همین حالا تسکش ساخته شده ولی هنوز شروع نشده
+            if r["id"] in self._inflight:
+                continue
             # انقضای درخواست معلق در صف (بخش ۱۵.۱۱)
             if now - r["created_at"] > window:
                 self.d.downloads.set_status(r["id"], "expired", finished_at=now,

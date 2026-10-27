@@ -66,7 +66,9 @@ class Settings(BaseSettings):
 
     @property
     def db_file(self) -> Path:
-        return Path(self.storage_dir) / Path(self.database_path).name
+        """مسیر فایل پایگاه داده؛ مسیر مطلق (مثل ولوم Lucity) پذیرفته می‌شود."""
+        p = Path(self.database_path)
+        return p if p.is_absolute() else Path(self.storage_dir) / p.name
 
     @property
     def temp_dir(self) -> Path:

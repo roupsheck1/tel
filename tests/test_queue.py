@@ -190,3 +190,31 @@ async def test_global_capacity(engine, services):
     assert engine._pick_next() is None  # اما پردازش انتخاب نمی‌شود
     services.settings.set("capacity.max_active_downloads", 3)
     assert engine._pick_next() is not None
+
+
+async def test_scheduler_loop_no_duplicate_processing(engine, services, fake_downloader,
+                                                      fake_sender):
+    """رگرسیون فریز حلقه رویداد: زمان‌بند واقعی نباید همان درخواست را دوباره بردارد.
+
+    پیش از فیکس، حلقه زمان‌بند بعد از create_task بدون هیچ نقطه await دوباره
+    همان ردیف queued را برمی‌داشت، بی‌نهایت تسک تکراری می‌ساخت و حلقه رویداد
+    (و کل ربات) فریز می‌شد. اکنون _inflight از برداشتن تکراری جلوگیری می‌کند.
+    """
+    make_paid_sub(services, USER1)
+    ok, rid = await engine.submit(USER1, "https://instagram.com/reel/dup1/", "dup1")
+    assert ok
+    await engine.start()
+    try:
+        async def _wait_completed() -> None:
+            while services.downloads_repo.get(rid)["status"] != "completed":
+                await asyncio.sleep(0.05)
+
+        await asyncio.wait_for(_wait_completed(), timeout=15)
+        # دقیقاً یک دانلود — بدون تکرار
+        assert fake_downloader.calls.count("dup1") == 1, fake_downloader.calls
+        assert len(fake_sender.sent) == 1
+        # هیچ درخواست معلقی در مجموعه inflight نمانده است
+        assert not engine._inflight
+        assert not engine._workers
+    finally:
+        await engine.stop()

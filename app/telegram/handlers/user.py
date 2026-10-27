@@ -16,10 +16,15 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
 from ...services import Services
+from ...utils import normalize_digits
 
 log = logging.getLogger("handlers.user")
 router = Router()
-CODE_RE = re.compile(r"^\d{6}$")
+# روتر پس‌زمینه (fallback): این router باید «بعد از» روترهای ادمین ثبت شود تا
+# هندلر همه‌گیر free_text، دستورات (مثل /panel) و ورودی‌های متنی ادمین را
+# نمی‌بلعد. در main.py ترتیب ثبت را ببینید.
+fallback = Router(name="fallback")
+CODE_RE = re.compile(r"^[0-9]{6}$")
 PROMO_RE = re.compile(r"^(?:/code\s+|کد\s+)?([A-Za-z0-9-]{4,20})$")
 
 
@@ -209,14 +214,20 @@ async def cmd_code(message: Message, services: Services):
     if len(parts) < 2:
         await message.reply("شکل صحیح: /code IG-XXXX")
         return
-    ok, msg = services.sub_service.redeem_code(parts[1], message.from_user.id)
+    # ارقام فارسی/عربی هم پذیرفته می‌شود (تجربه کاربر فارسی‌زبان)
+    ok, msg = services.sub_service.redeem_code(normalize_digits(parts[1]).strip(),
+                                                message.from_user.id)
     await message.reply(msg)
 
 
 # ============================ پیام آزاد کاربر ============================
-@router.message(F.text)
+# نکته مهم: این هندلر روی روتر «fallback» است نه روتر اصلی؛ در main.py بعد از
+# روترهای ادمین ثبت می‌شود تا دستورات ادمین (/panel و ...) و ورودی‌های متنی
+# حالت‌های FSM ادمین (پیام همگانی، جستجو و ...) به هندلر درست برسند.
+@fallback.message(F.text)
 async def free_text(message: Message, state: FSMContext, services: Services):
-    text = (message.text or "").strip()
+    # نرمال‌سازی ارقام فارسی/عربی به انگلیسی (کد اتصال با ارقام فارسی هم کار کند)
+    text = normalize_digits((message.text or "").strip())
 
     # ۱) کد ۶ رقمی اتصال (بخش ۵)
     if CODE_RE.fullmatch(text):
@@ -227,7 +238,12 @@ async def free_text(message: Message, state: FSMContext, services: Services):
                 "حالا پست یا ریلز را در دایرکت اینستاگرام برای پیج ربات بفرست."
             )
         else:
-            await message.reply(result)
+            await message.reply(
+                f"❌ {result}\n\n"
+                "راهنما: فقط «آخرین کد» که در دایرکت اینستاگرام گرفته‌ای معتبر است "
+                "(۲۰ دقیقه اعتبار دارد). اگر کدت منقضی شده، در اینستاگرام دوباره به "
+                "پیج ربات پیام بفرست تا کد تازه بگیری و همین‌جا بفرست."
+            )
         return
 
     # ۲) لینک اینستاگرام در تلگرام — جزو جریان اصلی نیست (بخش ۲.۱)

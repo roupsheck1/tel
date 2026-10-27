@@ -327,7 +327,8 @@ class InstagramInbox:
             # کاربر متصل نیست → کد اتصال (بخش ۵.۲)
             code = self.links.create_code(username, self.code_ttl)
             text = (f"کد اتصال شما: {code}\n"
-                    f"تا {self.code_ttl // 60} دقیقه فرصت داری این کد را برای ربات تلگرام بفرستی.")
+                    f"تا {self.code_ttl // 60} دقیقه فرصت داری همین کد را برای ربات تلگرام "
+                    "بفرستی (فقط همین کد معتبر است؛ کدهای قبلی باطل شده‌اند).")
             self._send_dm(thread.id, text)
             return True
         post = extract_post(m)

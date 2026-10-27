@@ -34,9 +34,13 @@ def build_dispatcher(services: Services) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.middleware(UserMiddleware(services))
     dp.callback_query.middleware(UserMiddleware(services))
+    # ترتیب مهم است: روتر کاربر (بدون هندلر همه‌گیر)، سپس ادمین‌ها،
+    # و در انتها روتر fallback که free_text همه‌گیر دارد — تا دستورات ادمین
+    # (/panel و ورودی‌های FSM ادمین) بلعیده نشوند.
     dp.include_router(user_handlers.router)
     dp.include_router(admin_handlers.router)
     dp.include_router(admin_more_handlers.router)
+    dp.include_router(user_handlers.fallback)
     return dp
 
 
@@ -54,7 +58,17 @@ async def run() -> None:
     # --- پایگاه داده و سرویس‌ها ---
     db = Database(cfg.db_file)
     services = build_services(db, cfg.admin_ids)
-    log.info("پایگاه داده آماده شد (مهاجرت‌ها اعمال شدند).")
+    # تشخیص راه دور: مسیر مطلق دیتابیس + وضعیت نشست + تعداد داده‌های موجود
+    # (اگر بعد از هر دیپلوی این شمارنده‌ها صفر شوند، یعنی ذخیره‌سازی پایدار
+    # (ولوم) به سرویس وصل نیست و همه اتصال‌ها با هر دیپلوی از بین می‌روند.)
+    log.info(
+        "پایگاه داده آماده شد (مهاجرت‌ها اعمال شدند) | مسیر: %s | نشست اینستاگرام: %s "
+        "| کاربران: %s | اتصال‌های فعال: %s",
+        cfg.db_file.resolve(),
+        "موجود" if cfg.session_file.exists() else "ناموجود (ورود تازه لازم است)",
+        services.users_repo.count(),
+        services.links_repo.stats()["linked"],
+    )
 
     # --- تلگرام ---
     bot = Bot(

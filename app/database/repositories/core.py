@@ -147,30 +147,43 @@ class LinksRepo:
         )
 
     def link(self, code: str, telegram_id: int, ig_user_id: str | None = None) -> tuple[bool, str]:
-        """اتصال حساب؛ اطمینان از یک‌به‌یک‌بودن ارتباط (قفل تراکنشی)."""
+        """اتصال حساب؛ اطمینان از یک‌به‌یک‌بودن ارتباط (قفل تراکنشی).
+
+        ترتیب مهم است: همه بررسی‌ها «قبل از» مصرف‌شدن کد انجام می‌شوند تا
+        یک تلاش ناموفق، کدِ هنوز معتبر را نسوزاند (قبلاً کد در همان ابتدا
+        used=1 می‌شد و تلاش بعدی با همان کد «اشتباه یا منقضی» می‌گرفت).
+        """
+        from ...utils import normalize_digits
+        code = normalize_digits(str(code).strip())
         row = self.valid_code(code)
         if not row:
             return False, "کد اشتباه است یا منقضی شده است."
         ig_username = row["ig_username"].lower()
         with self.db.tx() as conn:
-            used = conn.execute(
-                "UPDATE link_codes SET used=1, used_by=? WHERE code=? AND used=0",
-                (telegram_id, code),
-            ).rowcount
-            if not used:
-                return False, "کد قبلاً استفاده شده است."
-            taken = conn.execute(
-                "SELECT telegram_id FROM account_links WHERE ig_username=? AND status='linked'",
+            # اتصال تکراری همان جفت → موفقیت بدون تغییر (idempotent)
+            existing = conn.execute(
+                "SELECT id, telegram_id FROM account_links WHERE ig_username=? AND status='linked'",
                 (ig_username,),
             ).fetchone()
-            if taken:
+            if existing is not None:
+                if existing["telegram_id"] == telegram_id:
+                    return True, ig_username
                 return False, "این اکانت اینستاگرام قبلاً به تلگرام دیگری وصل شده است."
             mine = conn.execute(
                 "SELECT id, ig_username FROM account_links WHERE telegram_id=? AND status='linked'",
                 (telegram_id,),
             ).fetchone()
             if mine:
-                return False, f"حساب تلگرامت قبلاً به @{mine['ig_username']} وصل است."
+                return False, (
+                    f"حساب تلگرامت قبلاً به @{mine['ig_username']} وصل است. "
+                    "اول با /unlink قطعش کن."
+                )
+            used = conn.execute(
+                "UPDATE link_codes SET used=1, used_by=? WHERE code=? AND used=0",
+                (telegram_id, code),
+            ).rowcount
+            if not used:
+                return False, "کد قبلاً استفاده شده است."
             conn.execute(
                 "INSERT INTO account_links (telegram_id, ig_username, ig_user_id, status, linked_at)"
                 " VALUES (?,?,?,'linked',?)",
