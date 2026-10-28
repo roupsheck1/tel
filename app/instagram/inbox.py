@@ -101,11 +101,15 @@ def _from_xma_raw(it: dict, mode: str):
 
 
 def _story_of_share(d: dict):
-    """استخراج استوری از story_share کلاسیک؛ خروجی (url, media_id, 'story')."""
+    """استخراج استوری از story_share کلاسیک؛ خروجی (url, media_id, 'story').
+
+    نکته: در URL استوری باید شناسهٔ استوری (story_media_id، عدد بزرگ) بیاید،
+    نه pk خام رسانه؛ pk خام برای story_download اینستاگراپی است.
+    """
     media_id = str(d.get("media_id") or "")
+    reel_id = str(d.get("reel_id") or "")
+    story_mid = str(d.get("story_media_id") or "")
     if "_" not in media_id:
-        reel_id = str(d.get("reel_id") or "")
-        story_mid = str(d.get("story_media_id") or "")
         if reel_id and story_mid:
             media_id = f"{reel_id}_{story_mid}"
         elif not media_id.isdigit():
@@ -113,10 +117,10 @@ def _story_of_share(d: dict):
     if not media_id:
         return None
     parts = media_id.split("_")
-    if len(parts) == 2:
-        url = f"https://www.instagram.com/stories/{parts[0]}/{parts[1]}/"
-    else:
-        url = f"https://www.instagram.com/stories/user/{parts[0]}/"
+    owner = parts[0]
+    # شناسهٔ URL: story_media_id (در صورت وجود) وگرنه بخش دوم media_id
+    url_id = story_mid or (parts[1] if len(parts) == 2 else parts[0])
+    url = f"https://www.instagram.com/stories/{owner}/{url_id}/"
     return url, media_id, "story"
 
 
