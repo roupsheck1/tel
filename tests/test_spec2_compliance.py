@@ -354,3 +354,25 @@ def test_all_admin_fsm_handlers_callable(services):
                 except Exception:
                     pass  # خطاهای منطقی از داده ساختگی اشکال ندارد؛ TypeError امضایی مهم است
     assert not bad, "هندلرهای FSM ادمین با خطای امضا شکست می‌خورند: " + "; ".join(bad)
+
+
+# ---------- §۴۲: مسیر پشتیبان‌گیری در راه‌اندازی ----------
+def test_start_all_accepts_backup_dir(tmp_path):
+    """start_all با backup_dir واقعی کار می‌کند و زمان‌بند پشتیبان ساخته می‌شود
+    (رگرسیون باگ str/Path در main.run — باگ با بوت واقعی فرایند کشف شد)."""
+    import asyncio
+    from unittest.mock import MagicMock
+    from app.schedulers import start_all
+
+    class FakeServices:
+        pass
+
+    async def run():
+        tasks = start_all(MagicMock(), FakeServices(), backup_dir=tmp_path / "bk")
+        assert len(tasks) == 5  # ۴ زمان‌بند + پشتیبان
+        for t in tasks:
+            t.cancel()
+        # بعد از cancel همه به‌آرامی پایان می‌یابند
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    asyncio.run(run())

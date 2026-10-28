@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -118,7 +119,7 @@ async def run() -> None:
     await engine.start()
     inbox.start_background()
     # پشتیبان‌گیری خودکار دوره‌ای (§۴۲ سند ۲) — در ذخیره‌سازی پایدار (ولوم)
-    tasks = start_all(bot, services, backup_dir=cfg.storage_dir / "backups")
+    tasks = start_all(bot, services, backup_dir=Path(cfg.storage_dir) / "backups")
 
     log.info("ربات راه‌اندازی شد. polling آغاز می‌شود...")
     try:
