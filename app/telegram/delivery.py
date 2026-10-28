@@ -12,11 +12,13 @@ import subprocess
 from pathlib import Path
 
 from aiogram import Bot
+from aiogram.types import FSInputFile
 
 log = logging.getLogger("telegram.delivery")
 
 BOT_API_LIMIT = 50 * 1024 * 1024     # سقف آپلود Bot API رسمی
 LOCAL_API_LIMIT = 2 * 1024 * 1024 * 1024  # سقف Local Bot API Server
+UPLOAD_TIMEOUT = 900  # ثانیه — آپلود فایل بزرگ ممکن است بیشتر از ۶۰ ثانیه پیش‌فرض طول بکشد
 
 
 class TelegramSender:
@@ -45,11 +47,17 @@ class TelegramSender:
             if path.suffix.lower() in (".mp4", ".m4v", ".mov", ".webm"):
                 await self._send_video(user_id, path)
             else:
-                await self.bot.send_photo(user_id, photo=path)
+                # نکته: aiogram 3 فقط str (آدرس/فایل‌آیدی) یا InputFile می‌پذیرد؛
+                # Path خام باعث خطای اعتبارسنجی SendPhoto می‌شود.
+                await self.bot.send_photo(
+                    user_id, photo=FSInputFile(path), request_timeout=UPLOAD_TIMEOUT,
+                )
             return True
         except Exception:
             try:  # تلاش دوم به‌صورت سند (fallback — بخش ۱۵.۱۱ خطای ارسال)
-                await self.bot.send_document(user_id, document=path)
+                await self.bot.send_document(
+                    user_id, document=FSInputFile(path), request_timeout=UPLOAD_TIMEOUT,
+                )
                 return True
             except Exception as e:
                 log.exception("ارسال فایل %s ناموفق: %s", path, e)
@@ -69,9 +77,9 @@ class TelegramSender:
         except Exception:
             pass
         await self.bot.send_video(
-            user_id, video=path, width=width, height=height, duration=duration,
-            supports_streaming=True,
-            read_timeout=600, write_timeout=600, connect_timeout=60,
+            user_id, video=FSInputFile(path), width=width, height=height,
+            duration=duration, supports_streaming=True,
+            request_timeout=UPLOAD_TIMEOUT,
         )
 
     async def _compress(self, path: Path) -> Path | None:

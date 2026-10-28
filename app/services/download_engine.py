@@ -349,9 +349,13 @@ class DownloadEngine:
             self.d.errors.log(category, "final_failure", str(err), request_id=rid,
                               user_id=user_id, stage=getattr(err, "stage", category),
                               retry_status="exhausted")
+            # فقط خط اول خطا به کاربر نشان داده می‌شود (خطاهای کتابخانه‌ای
+            # چندخطی مثل اعتبارسنجی pydantic برای کاربر بی‌معنا و گی‌کننده‌اند)
+            err_text = str(err).strip() or "خطای نامشخص"
+            first_line = err_text.splitlines()[0]
             await self._safe_notify(
                 user_id,
-                f"❌ پردازش درخواست شما با خطا مواجه شد:\n{err}\n"
+                f"❌ پردازش درخواست شما با خطا مواجه شد:\n{first_line}\n"
                 "در صورت اطمینان از عمومی‌بودن پست، بعداً دوباره بفرست."
             )
 
