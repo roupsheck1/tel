@@ -114,6 +114,10 @@ async def cmd_plans(message: Message, services: Services):
     if mode == "free":
         await message.reply("🎁 سرویس فعلاً رایگان است! بدون نیاز به خرید از سرویس استفاده کن.")
         return
+    # کلید قابلیت پرداخت دستی (§۵۳ سند ۲): مدیر بتواند خرید را موقتاً خاموش کند
+    if not services.settings.get("feature.manual_payment", True):
+        await message.reply("فروش موقتاً متوقف است. برای اطلاع از زمان شروع، در گروه ما بمان.")
+        return
     plans = services.plan_service.saleable_plans()
     if not plans:
         await message.reply("فعلاً پلنی برای فروش فعال نیست.")
@@ -148,6 +152,10 @@ async def cb_buy(callback: CallbackQuery, services: Services):
 
 @router.callback_query(F.data.startswith("trial:"))
 async def cb_trial(callback: CallbackQuery, services: Services):
+    # کلید قابلیت پلن آزمایشی (§۵۳ سند ۲)
+    if not services.settings.get("feature.trial", True):
+        await callback.answer("پلن آزمایشی موقتاً غیرفعال است.", show_alert=True)
+        return
     plan_id = int(callback.data.split(":")[1])
     ok, msg = services.sub_service.grant_trial(callback.from_user.id, plan_id, "user")
     await callback.answer(msg, show_alert=not ok)

@@ -105,6 +105,9 @@ async def notify_admins_new_receipt(bot: Bot, services: Services, order) -> None
     دکمه‌های سریع تأیید/رد فقط میان‌بُرند؛ بررسی مجوز نهایی هنگام اجرای خودِ
     عملیات انجام می‌شود (مخفی‌بودن دکمه کنترل دسترسی نیست — ۱۹.۴).
     """
+    # اعلان سفارش/رسید جدید — قابل خاموش‌کردن از پنل (§۳۱ سند ۲)
+    if not services.settings.get("notify.on_order", True):
+        return
     admins = services.admins_repo.ids_with_permission(PERM_APPROVE_PAYMENT)
     if not admins:
         return

@@ -10,6 +10,7 @@ from .commerce import (
 )
 from .operations import (
     AuditRepo,
+    BackupRepo,
     BroadcastRepo,
     DownloadsRepo,
     ErrorsRepo,
@@ -23,5 +24,5 @@ __all__ = [
     "PlansRepo", "SubscriptionsRepo", "OrdersRepo", "PaymentMethodsRepo",
     "PromoCodesRepo", "CampaignsRepo",
     "DownloadsRepo", "AuditRepo", "ErrorsRepo", "BroadcastRepo",
-    "GroupsRepo", "ExceptionsRepo", "TrialRepo",
+    "GroupsRepo", "ExceptionsRepo", "TrialRepo", "BackupRepo",
 ]

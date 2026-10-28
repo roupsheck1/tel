@@ -354,4 +354,15 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
         )""",
         "CREATE UNIQUE INDEX idx_trial_once ON trial_grants(user_id, plan_id, source)",
     ]),
+    # ---------- سابقه پشتیبان‌گیری (§۳۳ و §۴۲ سند ۲) ----------
+    (3, [
+        """CREATE TABLE backup_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT NOT NULL,
+            size_bytes INTEGER,
+            status TEXT NOT NULL DEFAULT 'ok',
+            note TEXT,
+            created_at INTEGER NOT NULL
+        )""",
+    ]),
 ]

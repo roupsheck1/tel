@@ -20,6 +20,7 @@ MAIN_MENU = kb([
     [("📊 آمار و گزارش‌ها", "a:stats:menu:")],
     [("📥 مدیریت دانلودها", "a:downloads:menu:")],
     [("🎟 کدهای اشتراک", "a:codes:menu:")],
+    [("👥‍👥 گروه‌های کاربری", "a:groups:menu:")],
     [("📢 پیام همگانی", "a:broadcast:menu:")],
     [("🛠 تنظیمات ربات", "a:settings:menu:")],
     [("📋 گزارش خطاها", "a:errors:menu:")],
@@ -71,13 +72,19 @@ def menu_of(section: str) -> InlineKeyboardMarkup:
             [("➕ ساخت کد", "a:codes:new:")],
             [("📃 فهرست کدها", "a:codes:list:0")],
         ],
+        "groups": [
+            [("📃 فهرست گروه‌ها", "a:groups:list:")],
+            [("➕ گروه دستی جدید", "a:groups:new:")],
+        ],
         "broadcast": [
             [("📢 پیام جدید", "a:broadcast:new:")],
             [("📃 گزارش ارسال‌ها", "a:broadcast:jobs:")],
         ],
         "settings": [
             [("📝 ویرایش پیام‌ها", "a:settings:texts:")],
-            [("🔧 حالت تعمیرات", "a:settings:maint:")],
+            [("🔧 حالت نگهداری", "a:settings:maint:")],
+            [("🔑 کلیدهای قابلیت", "a:settings:features:")],
+            [("🔔 اعلان‌ها", "a:settings:notify:")],
             [("⏱ تنظیمات انتظار", "a:settings:wait:")],
             [("📥 پیکربندی حالت رایگان", "a:settings:free:")],
         ],

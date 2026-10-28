@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from ...admin.permissions import (
-    PERM_BROADCAST, PERM_CREATE_PROMO, PERM_MANAGE_ADMINS, PERM_REPORTS,
+    PERM_BROADCAST, PERM_CREATE_PROMO, PERM_EDIT_USERS, PERM_MANAGE_ADMINS, PERM_REPORTS,
     PERM_TECH_SETTINGS, PERM_VIEW_USERS, ROLE_LABELS, ALL_PERMISSIONS, PERM_LABELS,
 )
 from ...services import Services
@@ -31,6 +31,10 @@ async def codes_menu(cb: CallbackQuery, services: Services, ctx=None):
 @router.callback_query(F.data == "a:codes:new:")
 @require(PERM_CREATE_PROMO)
 async def codes_new(cb: CallbackQuery, state: FSMContext, services: Services, ctx=None):
+    # کلید قابلیت کدهای اشتراک (§۵۳ سند ۲)
+    if not services.settings.get("feature.promo_codes", True):
+        await cb.answer("کدهای اشتراک موقتاً غیرفعال شده‌اند.", show_alert=True)
+        return
     plans = services.plans_repo.list()
     kbrows = [[(p["title"], f"a:codes:plan:{p['id']}")] for p in plans]
     kbrows.append(ak.BACK_HOME_ROW)
@@ -84,6 +88,66 @@ async def codes_cancel(cb: CallbackQuery, services: Services, ctx=None):
     await codes_list(cb, services)
 
 
+# ============================ ۵ب) گروه‌های کاربری (بخش ۷ سند ۲) ============================
+@router.callback_query(F.data == "a:groups:menu:")
+@require(PERM_VIEW_USERS)
+async def groups_menu(cb: CallbackQuery, services: Services, ctx=None):
+    await edit_or_answer(cb, "👥‍👥 گروه‌های کاربری (دستی و زمانی — §۹ و §۶۲ سند ۲):",
+                        ak.menu_of("groups"))
+
+
+@router.callback_query(F.data == "a:groups:list:")
+@require(PERM_VIEW_USERS)
+async def groups_list(cb: CallbackQuery, services: Services, ctx=None):
+    rows = services.groups_repo.list()
+    if not rows:
+        await edit_or_answer(cb, "گروهی ساخته نشده است.", ak.menu_of("groups"))
+        return
+    kinds = {"manual": "دستی", "time": "زمانی", "filter": "فیلتری"}
+    lines = ["👥‍👥 گروه‌ها:", ""]
+    kbrows = []
+    for g in rows:
+        count = len(services.groups_repo.member_ids(g["id"]))
+        lines.append(f"• [{g['id']}] {g['name']} ({kinds.get(g['kind'], g['kind'])}) — {count} نفر")
+        kbrows.append([(f"👥 {g['name']} ({count})", f"a:groups:card:{g['id']}")])
+    kbrows.append(ak.BACK_HOME_ROW)
+    await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
+
+
+@router.callback_query(F.data.startswith("a:groups:card:"))
+@require(PERM_VIEW_USERS)
+async def groups_card(cb: CallbackQuery, services: Services, ctx=None):
+    gid = int(cb.data.split(":")[3])
+    g = services.groups_repo.get(gid)
+    if not g:
+        await cb.answer("گروه پیدا نشد.", show_alert=True)
+        return
+    members = services.groups_repo.member_ids(gid)
+    kinds = {"manual": "دستی", "time": "زمانی", "filter": "فیلتری"}
+    lines = [
+        f"👥 گروه «{g['name']}»",
+        f"نوع: {kinds.get(g['kind'], g['kind'])}",
+        f"تعداد اعضا: {len(members)}",
+        "",
+        "برای افزودن/حذف عضو، شناسه عددی کاربر را از کارت کاربر (بخش کاربران) و با دکمه"
+        " «افزودن به گروه» وارد کن.",
+    ]
+    await edit_or_answer(cb, "\n".join(lines), ak.with_back([]))
+
+
+@router.callback_query(F.data == "a:groups:new:")
+@require(PERM_EDIT_USERS)
+async def groups_new(cb: CallbackQuery, state: FSMContext, services: Services, ctx=None):
+    await ask_input(
+        state, cb,
+        "➕ گروه دستی جدید — یک خط به این شکل:\n"
+        "<code>نام_گروه | شناسه۱,شناسه۲,...</code>\n"
+        "مثال: <code>vip_users | 123456,789012</code>\n"
+        "(شناسه‌ها اختیاری‌اند؛ بعداً هم می‌توانی عضو اضافه کرد)",
+        "groups:new",
+    )
+
+
 # ============================ ۶) پیام همگانی (بخش ۱۷) ============================
 AUDIENCES = {
     "all": "همه کاربران",
@@ -103,9 +167,35 @@ async def broadcast_menu(cb: CallbackQuery, services: Services, ctx=None):
 @router.callback_query(F.data == "a:broadcast:new:")
 @require(PERM_BROADCAST)
 async def broadcast_new(cb: CallbackQuery, services: Services, ctx=None):
+    # کلید قابلیت پیام همگانی (§۵۳ سند ۲)
+    if not services.settings.get("feature.broadcast", True):
+        await cb.answer("پیام همگانی موقتاً غیرفعال شده است.", show_alert=True)
+        return
     kbrows = [[(label, f"a:broadcast:aud:{key}")] for key, label in AUDIENCES.items()]
+    # مخاطب «اعضای گروه دستی» (§۲۸ سند ۲)
+    for g in services.groups_repo.list():
+        if g["kind"] == "manual":
+            kbrows.append([(f"👥 گروه: {g['name']}", f"a:broadcast:audgroup:{g['id']}")])
     kbrows.append(ak.BACK_HOME_ROW)
     await edit_or_answer(cb, "📢 مخاطبان را انتخاب کن (بخش ۱۷.۱):", ak.kb(kbrows))
+
+
+@router.callback_query(F.data.startswith("a:broadcast:audgroup:"))
+@require(PERM_BROADCAST)
+async def broadcast_audience_group(cb: CallbackQuery, state: FSMContext, services: Services,
+                                    ctx=None):
+    """مخاطب = اعضای یک گروه دستی (§۲۸ سند ۲)."""
+    gid = cb.data.split(":")[3]
+    g = services.groups_repo.get(int(gid))
+    if not g:
+        await cb.answer("گروه پیدا نشد.", show_alert=True)
+        return
+    count = len(services.groups_repo.member_ids(int(gid)))
+    await ask_input(
+        state, cb,
+        f"📝 متن پیام همگانی برای گروه «{g['name']}» ({count} نفر) را بفرست:",
+        "broadcast:group", gid,
+    )
 
 
 @router.callback_query(F.data.startswith("a:broadcast:aud:"))
@@ -136,7 +226,11 @@ async def _run_broadcast(bot: Bot, services: Services, job_id: int, admin_id: in
     import json as _json
     job = services.broadcast_repo.get(job_id)
     spec = _json.loads(job["filter_spec"]) if isinstance(job["filter_spec"], str) else job["filter_spec"]
-    user_ids = services.users_repo.filter_ids(spec.get("type", "all"), spec.get("value"))
+    if spec.get("type") == "group":
+        # مخاطب گروه دستی (§۲۸ سند ۲)
+        user_ids = services.groups_repo.member_ids(int(spec.get("value") or 0))
+    else:
+        user_ids = services.users_repo.filter_ids(spec.get("type", "all"), spec.get("value"))
     sent = failed = 0
     for uid in user_ids:
         if services.broadcast_repo.get(job_id)["status"] != "running":
@@ -233,13 +327,48 @@ async def settings_edittext(cb: CallbackQuery, state: FSMContext, services: Serv
 @require(PERM_TECH_SETTINGS)
 async def settings_maint(cb: CallbackQuery, services: Services, ctx=None):
     on = services.settings.is_maintenance
-    toggle = ("✅ خاموش کن", "a:settings:maint:off") if on else ("🔧 روشن کن", "a:settings:maint:on")
+    block_new = services.settings.get("maintenance.block_new_requests", True)
+    cont_queue = services.settings.get("maintenance.continue_queue", True)
+    if on:
+        rows = [
+            ("⏸ توقف درخواست‌های جدید: " + ("روشن ⚠️" if block_new else "خاموش ✅"),
+             f"a:settings:maintopt:block:{0 if block_new else 1}"),
+            ("▶️ ادامه صف قبلی: " + ("روشن ✅" if cont_queue else "متوقف ⏸"),
+             f"a:settings:maintopt:cont:{0 if cont_queue else 1}"),
+            ("🔧 خاموش‌کردن حالت نگهداری", "a:settings:maint:off"),
+        ]
+    else:
+        rows = [("🔧 روشن‌کردن حالت نگهداری", "a:settings:maint:on")]
+    kbrows = [[r] for r in rows]  # هر r یک (text, callback)
+    kbrows.append(ak.BACK_HOME_ROW)
     await edit_or_answer(
         cb,
-        f"🔧 حالت تعمیرات: {'روشن ⚠️' if on else 'خاموش ✅'}\n"
-        "در حالت تعمیرات فقط مدیران می‌توانند پیام بفرستند.",
-        ak.kb([[toggle], ak.BACK_HOME_ROW]),
+        "🔧 حالت نگهداری (§۵۴ سند ۲):\n"
+        f"وضعیت: {'روشن ⚠️' if on else 'خاموش ✅'}\n\n"
+        "در حالت روشن مدیر مشخص می‌کند:\n"
+        "• درخواست جدید ثبت شود یا نه\n"
+        "• درخواست‌های قبلی ادامه پیدا کنند یا بمانند\n"
+        "(فقط مدیران در حالت نگهداری می‌توانند پیام بفرستند؛ تنظیمات پس از restart حفظ می‌شوند)",
+        ak.kb(kbrows),
     )
+
+
+@router.callback_query(F.data.startswith("a:settings:maintopt:"))
+@require(PERM_TECH_SETTINGS)
+async def settings_maint_option(cb: CallbackQuery, services: Services, ctx=None):
+    """تنظیم سیاست‌های حالت نگهداری (§۵۴ سند ۲)."""
+    parts = cb.data.split(":")  # a:settings:maintopt:block:1
+    which, value = parts[3], bool(int(parts[4]))
+    if which == "block":
+        services.settings.set("maintenance.block_new_requests", value, ctx.telegram_id)
+        services.audit_repo.log(ctx.telegram_id, "set_maint_block_new", "settings",
+                                new_value={"block": value})
+    else:
+        services.settings.set("maintenance.continue_queue", value, ctx.telegram_id)
+        services.audit_repo.log(ctx.telegram_id, "set_maint_continue_queue", "settings",
+                                new_value={"continue": value})
+    await cb.answer("اعمال شد ✅")
+    await settings_maint(cb, services)
 
 
 @router.callback_query(F.data.in_({"a:settings:maint:on", "a:settings:maint:off"}))
@@ -251,6 +380,81 @@ async def settings_maint_toggle(cb: CallbackQuery, services: Services, ctx=None)
                             new_value={"on": turn_on})
     await cb.answer("حالت تعمیرات اعمال شد ✅")
     await settings_maint(cb, services)
+
+
+# ---------------------------- کلیدهای قابلیت (§۵۳) و اعلان‌ها (§۳۱) ----------------------------
+FEATURE_KEYS = {
+    "feature.story_download": "📥 دریافت استوری",
+    "feature.large_files": "📦 فایل حجیم",
+    "feature.promo_codes": "🎟 کدهای اشتراک",
+    "feature.manual_payment": "💳 پرداخت دستی",
+    "feature.broadcast": "📢 پیام همگانی",
+    "feature.trial": "🎁 پلن آزمایشی",
+}
+
+NOTIFY_KEYS = {
+    "notify.on_queue": "📥 ثبت درخواست",
+    "notify.on_success": "✅ تحویل موفق",
+    "notify.on_failure": "❌ شکست عملیات",
+    "notify.on_order": "🔔 سفارش/رسید جدید (مدیران)",
+    "notify.on_expiry": "⏳ یادآوری انقضا",
+}
+
+
+@router.callback_query(F.data == "a:settings:features:")
+@require(PERM_TECH_SETTINGS)
+async def settings_features(cb: CallbackQuery, services: Services, ctx=None):
+    """کلیدهای قابلیت مستقل (§۵۳ سند ۲): با خرابی یک سرویس خارجی فقط همان قابلیت خاموش شود."""
+    kbrows = []
+    lines = ["🔑 کلیدهای قابلیت (§۵۳):", ""]
+    for key, label in FEATURE_KEYS.items():
+        on = bool(services.settings.get(key, True))
+        lines.append(f"• {label}: {'روشن ✅' if on else 'خاموش ⏸'}")
+        kbrows.append([(f"{'✅' if on else '⏸'} {label}",
+                        f"a:settings:feattoggle:{key}:{0 if on else 1}")])
+    kbrows.append(ak.BACK_HOME_ROW)
+    await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
+
+
+@router.callback_query(F.data.startswith("a:settings:feattoggle:"))
+@require(PERM_TECH_SETTINGS)
+async def settings_feature_toggle(cb: CallbackQuery, services: Services, ctx=None):
+    parts = cb.data.split(":", 3)  # a:settings:feattoggle:feature.x:1
+    key, value = parts[3].rsplit(":", 1)
+    value = bool(int(value))
+    services.settings.set(key, value, ctx.telegram_id)
+    services.audit_repo.log(ctx.telegram_id, "toggle_feature", "settings", key,
+                            new_value={"on": value})
+    await cb.answer("اعمال شد ✅")
+    await settings_features(cb, services)
+
+
+@router.callback_query(F.data == "a:settings:notify:")
+@require(PERM_TECH_SETTINGS)
+async def settings_notify(cb: CallbackQuery, services: Services, ctx=None):
+    """روشن/خاموش هر اعلان (§۳۱ سند ۲: اعلان‌ها قابل تنظیم باشند)."""
+    kbrows = []
+    lines = ["🔔 اعلان‌های سامانه (§۳۱):", ""]
+    for key, label in NOTIFY_KEYS.items():
+        on = bool(services.settings.get(key, True))
+        lines.append(f"• {label}: {'روشن ✅' if on else 'خاموش ⏸'}")
+        kbrows.append([(f"{'✅' if on else '⏸'} {label}",
+                        f"a:settings:notifytoggle:{key}:{0 if on else 1}")])
+    kbrows.append(ak.BACK_HOME_ROW)
+    await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
+
+
+@router.callback_query(F.data.startswith("a:settings:notifytoggle:"))
+@require(PERM_TECH_SETTINGS)
+async def settings_notify_toggle(cb: CallbackQuery, services: Services, ctx=None):
+    parts = cb.data.split(":", 3)
+    key, value = parts[3].rsplit(":", 1)
+    value = bool(int(value))
+    services.settings.set(key, value, ctx.telegram_id)
+    services.audit_repo.log(ctx.telegram_id, "toggle_notify", "settings", key,
+                            new_value={"on": value})
+    await cb.answer("اعمال شد ✅")
+    await settings_notify(cb, services)
 
 
 @router.callback_query(F.data == "a:settings:wait:")
@@ -288,6 +492,19 @@ async def settings_free(cb: CallbackQuery, state: FSMContext, services: Services
         f"queue={cfg['queue_limit']}, hourly={cfg['hourly_quota']}, daily={cfg['daily_quota']}</code>",
         "settings:free",
     )
+
+
+@router.callback_query(F.data.startswith("a:downloads:refund:"))
+@require(PERM_TECH_SETTINGS)
+async def downloads_refund_quota(cb: CallbackQuery, services: Services, ctx=None):
+    """پس‌گرفتن شارژ سهمیه یک درخواست (§۶۰ سند ۲: اصلاح سهمیه توسط مدیر)."""
+    rid = int(cb.data.split(":")[3])
+    ok = services.downloads_repo.refund_quota(rid)
+    services.audit_repo.log(ctx.telegram_id, "refund_quota", "request", str(rid),
+                            result="success" if ok else "noop")
+    await cb.answer("سهمیه این درخواست پس گرفته شد ✅" if ok
+                    else "این درخواست سهمیه‌ای شارژ نشده بود.")
+    await cb.message.answer(f"درخواست #{rid}: سهمیه پس گرفته شد." if ok else "تغییری نکرد.")
 
 
 # ============================ ۸) گزارش خطاها (بخش ۲۰.۲) ============================
@@ -403,6 +620,30 @@ async def health_menu(cb: CallbackQuery, services: Services, ctx=None):
         f"💿 فضای دیسک: {disk.free // (1024**3)} گیگ آزاد از {disk.total // (1024**3)} گیگ",
         f"💰 وضعیت فروش: {labels.get(mode, mode)}",
     ]
+    # ---- فایل‌های موقت و ظرفیت (§۲۲ سند ۲: کنترل ظرفیت و فضای ذخیره‌سازی) ----
+    temp_info = _temp_stats(services)
+    if temp_info is not None:
+        files, total_mb, oldest = temp_info
+        lines.append(
+            f"🗂 فایل موقت: {files} فایل / {total_mb:.1f} مگابایت"
+            + (f" | قدیمی‌ترین: {ts_fa(oldest)}" if oldest else "")
+        )
+    # درخواست‌های منقضی/لغوشده (§۲۲: «فایل‌های منقضی‌شده»)
+    if counts.get("expired"):
+        lines.append(f"⏸ درخواست‌های منقضی‌شده: {counts['expired']}")
+    if counts.get("canceled"):
+        lines.append(f"🚫 درخواست‌های لغوشده: {counts['canceled']}")
+    # ---- وضعیت آخرین پشتیبان‌گیری (§۳۳ سند ۲ — واقعی، نه ثابت) ----
+    backup = services.backup_repo.last()
+    if backup:
+        age_h = (int(time.time()) - backup["created_at"]) // 3600
+        healthy_backup = age_h <= 12
+        lines.append(
+            f"💾 آخرین پشتیبان: {ts_fa(backup['created_at'])} "
+            f"({backup['size_bytes'] // 1024}KB) {'✅' if healthy_backup else '⚠️ قدیمی'}"
+        )
+    else:
+        lines.append("💾 آخرین پشتیبان: هنوز ثبت نشده ⚠️")
     if last_admin:
         a = last_admin[0]
         lines.append(f"🕘 آخرین عملیات مدیریتی: {a['action']} — {ts_fa(a['created_at'])}")
@@ -413,6 +654,30 @@ async def health_menu(cb: CallbackQuery, services: Services, ctx=None):
                      + (f" | خطا: {inbox['last_error'][:40]}" if inbox.get("last_error") else ""))
         lines.append(f"🤖 تلگرام: فعال ✅")
     await edit_or_answer(cb, "\n".join(lines), ak.menu_of("health"))
+
+
+def _temp_stats(services: Services):
+    """آمار واقعی فایل‌های موقت (§۲۲ سند ۲: فضای اشغال‌شده توسط فایل‌های موقت)."""
+    import os
+    from pathlib import Path
+    base = None
+    engine = services.engine
+    if engine is not None and getattr(engine, "d", None) is not None:
+        base = Path(engine.d.temp_dir)
+    if base is None or not base.exists():
+        return None
+    files, total, oldest = 0, 0, None
+    for child in base.rglob("*"):
+        try:
+            if child.is_file():
+                st = child.stat()
+                files += 1
+                total += st.st_size
+                mtime = int(st.st_mtime)
+                oldest = mtime if oldest is None else min(oldest, mtime)
+        except OSError:
+            continue
+    return files, total / (1024 * 1024), oldest
 
 
 # ============================ دیسپچر ورودی FSM ============================
@@ -527,6 +792,28 @@ async def admin_input(message: Message, state: FSMContext, services: Services):
             await done("🎟 کدهای ساخته‌شده:\n" + "\n".join(f"<code>{c}</code>" for c in codes))
             return
         # ---- پیام همگانی ----
+        if flow == "broadcast:group":
+            gid = int(arg)
+            g = services.groups_repo.get(gid)
+            if not g:
+                await done("گروه پیدا نشد.")
+                return
+            user_ids = services.groups_repo.member_ids(gid)
+            label = f"گروه {g['name']}"
+            job_id = services.broadcast_repo.create(admin_id, {"type": "group", "value": gid}, text)
+            services.broadcast_repo.set_preview(job_id, len(user_ids))
+            await state.update_data(broadcast_job=job_id)
+            try:
+                await message.bot.send_message(admin_id, f"🧪 پیش‌نمایش پیام همگانی:\n\n{text}")
+            except Exception:
+                pass
+            await message.reply(
+                f"📢 پیش‌نمایش بالا برای خودت ارسال شد.\n"
+                f"تعداد مخاطبان ({label}): {len(user_ids)}\n"
+                "ارسال را تأیید می‌کنی؟",
+                reply_markup=ak.confirm_kb(f"a:broadcast:confirm:{job_id}", "a:cancel:"),
+            )
+            return
         if flow == "broadcast:text":
             user_ids = services.users_repo.filter_ids(arg)
             job_id = services.broadcast_repo.create(admin_id, {"type": arg}, text)
@@ -599,6 +886,64 @@ async def admin_input(message: Message, state: FSMContext, services: Services):
                     "در صورت اشتباه بودن، دوباره سفارش ثبت کن یا با پشتیبانی تماس بگیر.")
             except Exception as e:
                 log.warning("اطلاع رد به کاربر %s ناموفق: %s", order["user_id"], e)
+            return
+        # ---- گروه‌های دستی (§۹ سند ۲) ----
+        if flow == "groups:new":
+            parts = [p.strip() for p in text.split("|")]
+            if not parts or not parts[0]:
+                await done("⚠️ شکل صحیح: نام_گروه | شناسه‌ها")
+                return
+            name = parts[0]
+            ids = []
+            if len(parts) > 1 and parts[1].strip():
+                from ...utils import normalize_digits
+                for tok in normalize_digits(parts[1]).replace("،", ",").split(","):
+                    tok = tok.strip()
+                    if tok.isdigit():
+                        ids.append(int(tok))
+            ok, res = services.group_service.create_manual_group(name, ids)
+            if not ok:
+                await done(f"⚠️ {res}")
+                return
+            services.audit_repo.log(admin_id, "create_manual_group", "group", str(res),
+                                    new_value={"name": name, "members": len(ids)})
+            await done(f"✅ گروه «{name}» با {len(ids)} عضو ساخته شد (#{res}).")
+            return
+        # ---- دانلودها: پیگیری با شناسه (§۵۶ سند ۲) ----
+        if flow == "downloads:track":
+            from ...utils import normalize_digits
+            rid_text = normalize_digits(text.strip().lstrip("#")).strip()
+            if not rid_text.isdigit():
+                await done("⚠️ شناسه پیگیری عددی نیست.")
+                return
+            r = services.downloads_repo.get(int(rid_text))
+            if not r:
+                await done(f"درخواستی با شناسه #{rid_text} پیدا نشد.")
+                return
+            u = services.users_repo.get(r["user_id"])
+            sub = services.subs_repo.active_of(r["user_id"])
+            err = (r["last_error"] or "")[:150]
+            lines = [
+                f"🔎 درخواست <code>#{r['id']}</code>",
+                f"👤 کاربر: {mention(r['user_id'], u['username'] if u else None)}"
+                f" — اشتراک: {'فعال' if sub else 'ندارد'}",
+                f"🔗 محتوا: {r['media_url'][:60]} (نوع: {r['media_kind']})",
+                f"📌 وضعیت: {r['status']} | تلاش: {r['attempts']}",
+                f"🕰 ثبت: {ts_fa(r['created_at'])} | شروع: {ts_fa(r['started_at'])}"
+                f" | پایان: {ts_fa(r['finished_at'])}",
+            ]
+            if r["file_size"]:
+                lines.append(f"📦 حجم: {r['file_size'] // (1024 * 1024)} مگابایت")
+            if err:
+                lines.append(f"⚠️ آخرین خطا: {err}")
+            kbrows = []
+            # اصلاح سهمیه (§۶۰ سند ۲): اگر درخواست شارژ شده باشد مدیر می‌تواند پس بگیرد
+            if r["quota_charged"]:
+                kbrows.append([("↩️ پس‌گرفتن سهمیه این درخواست",
+                                f"a:downloads:refund:{r['id']}")])
+            from ..keyboards import admin as ak2
+            kbrows.append(ak2.BACK_HOME_ROW)
+            await message.reply("\n".join(lines), reply_markup=ak2.kb(kbrows))
             return
         # ---- مدیران ----
         if flow == "admins:add":

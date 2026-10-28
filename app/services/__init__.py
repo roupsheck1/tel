@@ -6,9 +6,9 @@ from pathlib import Path
 
 from ..database import Database
 from ..database.repositories import (
-    AdminsRepo, AuditRepo, BroadcastRepo, CampaignsRepo, DownloadsRepo, ErrorsRepo,
-    ExceptionsRepo, GroupsRepo, LinksRepo, OrdersRepo, PaymentMethodsRepo, PlansRepo,
-    PromoCodesRepo, SettingsRepo, SubscriptionsRepo, TrialRepo, UsersRepo,
+    AdminsRepo, AuditRepo, BackupRepo, BroadcastRepo, CampaignsRepo, DownloadsRepo,
+    ErrorsRepo, ExceptionsRepo, GroupsRepo, LinksRepo, OrdersRepo, PaymentMethodsRepo,
+    PlansRepo, PromoCodesRepo, SettingsRepo, SubscriptionsRepo, TrialRepo, UsersRepo,
 )
 from ..admin.permissions import PermissionService
 from .download_engine import DownloadEngine, EngineDeps
@@ -41,6 +41,7 @@ class Services:
     errors_repo: ErrorsRepo
     broadcast_repo: BroadcastRepo
     trial_repo: TrialRepo
+    backup_repo: BackupRepo
 
     settings: SettingsService
     plan_service: PlanService
@@ -124,6 +125,7 @@ def build_services(db: Database, owner_ids: list[int]) -> Services:
     errors = ErrorsRepo(db)
     broadcast = BroadcastRepo(db)
     trials = TrialRepo(db)
+    backups = BackupRepo(db)
 
     settings = SettingsService(settings_repo)
     plan_service = PlanService(plans, subs)
@@ -139,6 +141,7 @@ def build_services(db: Database, owner_ids: list[int]) -> Services:
         payments_repo=payments, codes_repo=codes, campaigns_repo=campaigns,
         groups_repo=groups, exceptions_repo=exceptions, downloads_repo=downloads,
         audit_repo=audit, errors_repo=errors, broadcast_repo=broadcast, trial_repo=trials,
+        backup_repo=backups,
         settings=settings, plan_service=plan_service, user_service=user_service,
         sub_service=sub_service, order_service=order_service, group_service=group_service,
         permissions=permissions,

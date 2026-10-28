@@ -101,6 +101,15 @@ class DownloadEngine:
         if not access:
             return False, access.reason
 
+        # حالت نگهداری (§۵۴ سند ۲): مدیر تعیین می‌کند درخواست جدید ثبت نشود
+        if self.d.settings.is_maintenance and \
+                self.d.settings.get("maintenance.block_new_requests", True):
+            return False, "سامانه در حالت نگهداری است. کمی بعد دوباره بفرست."
+
+        # کلید قابلیت استوری (§۵۳ سند ۲): مدیر بتواند فقط دریافت استوری را خاموش کند
+        if media_kind == "story" and not self.d.settings.get("feature.story_download", True):
+            return False, "دریافت استوری موقتاً غیرفعال است."
+
         limits = self.effective_limits(user_id)
         if self.d.downloads.queued_of_user(user_id) >= limits.queue_limit:
             return False, "صف درخواست‌های شما پر است. کمی صبر کن تا فعلی‌ها تمام شوند."
@@ -208,6 +217,10 @@ class DownloadEngine:
         ترتیب: امتیاز = اولویت × ۱۰ + سن درخواست (دقیقه). افزایش سن باعث
         جلوگیری از گرسنگی درخواست‌های کم‌اولویت می‌شود (بخش ۱۵.۹).
         """
+        # حالت نگهداری (§۵۴ سند ۲): مدیر تعیین می‌کند درخواست‌های قبلی ادامه پیدا کنند یا نه
+        if self.d.settings.is_maintenance and \
+                not self.d.settings.get("maintenance.continue_queue", True):
+            return None
         queued = self.d.downloads.queued(limit=200)
         if not queued:
             return None
@@ -289,6 +302,14 @@ class DownloadEngine:
                     log.warning("فایل %s از سقف پلن بزرگ‌تر است و نادیده گرفته شد", f)
             if not files:
                 raise DownloadError("حجم فایل از سقف مجاز پلن شما بیشتر است.", stage="validation")
+            # کلید قابلیت فایل حجیم (§۵۳ سند ۲): بالای ۵۰ مگابایت نیاز به
+            # فشرده‌سازی/Local API دارد؛ اگر مدیر این قابلیت را خاموش کرده باشد
+            # درخواست حجیم در همان ابتدا و با پیام روشن رد می‌شود.
+            if not self.d.settings.get("feature.large_files", True):
+                big = [f for f in files if Path(f).stat().st_size > 50 * 1024 * 1024]
+                if big:
+                    raise DownloadError(
+                        "دریافت فایل حجیم موقتاً غیرفعال است.", stage="validation")
             total_size = sum(Path(f).stat().st_size for f in files)
             self.d.downloads.set_status(rid, "ready_to_send", file_paths=[str(f) for f in files],
                                         file_size=total_size)
@@ -311,7 +332,9 @@ class DownloadEngine:
             }.get(self.d.settings.get("downloads.wait_start_point"), now)
             if limits.wait_seconds > 0:
                 self.d.downloads.set_cooldown(user_id, point + limits.wait_seconds)
-            await self._safe_notify(user_id, "✅ فایل شما آماده و ارسال شد.")
+            # اعلان تحویل موفق — قابل خاموش‌کردن از پنل (§۳۱ سند ۲)
+            if self.d.settings.get("notify.on_success", True):
+                await self._safe_notify(user_id, "✅ فایل شما آماده و ارسال شد.")
         except DownloadError as e:
             await self._handle_failure(request, e, str(dest))
         except SendError as e:
@@ -353,11 +376,13 @@ class DownloadEngine:
             # چندخطی مثل اعتبارسنجی pydantic برای کاربر بی‌معنا و گی‌کننده‌اند)
             err_text = str(err).strip() or "خطای نامشخص"
             first_line = err_text.splitlines()[0]
-            await self._safe_notify(
-                user_id,
-                f"❌ پردازش درخواست شما با خطا مواجه شد:\n{first_line}\n"
-                "در صورت اطمینان از عمومی‌بودن پست، بعداً دوباره بفرست."
-            )
+            # اعلان شکست — قابل خاموش‌کردن از پنل (§۳۱ سند ۲)
+            if self.d.settings.get("notify.on_failure", True):
+                await self._safe_notify(
+                    user_id,
+                    f"❌ پردازش درخواست شما با خطا مواجه شد:\n{first_line}\n"
+                    "در صورت اطمینان از عمومی‌بودن پست، بعداً دوباره بفرست."
+                )
 
     async def _safe_notify(self, user_id: int, text: str) -> None:
         try:

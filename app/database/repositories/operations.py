@@ -123,6 +123,15 @@ class DownloadsRepo:
             "UPDATE download_requests SET quota_charged=1 WHERE id=?", (request_id,)
         )
 
+    def refund_quota(self, request_id: int) -> bool:
+        """اصلاح مصرف سهمیه توسط مدیر (§۶۰ سند ۲: «آیا مدیر می‌تواند سهمیه
+        مصرف‌شده را اصلاح کند؟» — بله؛ مصرف تاریخی حذف نمی‌شود، فقط شارژِ
+        اشتباهِ همان درخواست پس گرفته می‌شود و در audit ثبت می‌شود)."""
+        return self.db.execute(
+            "UPDATE download_requests SET quota_charged=0 WHERE id=? AND quota_charged=1",
+            (request_id,),
+        ).rowcount > 0
+
     def recover_on_startup(self) -> dict:
         """بازیابی صف پس از راه‌اندازی مجدد (بخش ۱۵.۱۴)."""
         reset = self.db.execute(
@@ -150,6 +159,17 @@ class DownloadsRepo:
             "UPDATE download_requests SET status='queued', attempts=0, last_error=NULL, updated_at=?"
             " WHERE id=? AND status='failed'",
             (NOW(), request_id),
+        ).rowcount > 0
+
+    def set_priority(self, request_id: int, priority: int) -> bool:
+        """تغییر اولویت دستی یک درخواست صف توسط مدیر (بخش ۶۴ سند ۲).
+
+        اولویت صف مستقل از سهمیه و تعداد دانلود هم‌زمان است (پیشنهاد §۶۴).
+        فقط درخواست‌های در صف قابل تغییرند تا وضعیت عملیات در جریان دست‌کاری نشود.
+        """
+        return self.db.execute(
+            "UPDATE download_requests SET priority=?, updated_at=? WHERE id=? AND status='queued'",
+            (priority, NOW(), request_id),
         ).rowcount > 0
 
     def recent(self, status: str | None = None, user_id: int | None = None, limit: int = 20):
@@ -500,3 +520,32 @@ class TrialRepo:
                 (user_id, plan_id)) or 0)
         return int(self.db.scalar(
             "SELECT COUNT(*) FROM trial_grants WHERE user_id=?", (user_id,)) or 0)
+
+
+class BackupRepo:
+    """ثبت وضعیت پشتیبان‌گیری برای مرکز سلامت (§۳۳ و §۴۲ سند ۲).
+
+    «وضعیت آخرین پشتیبان‌گیری» یکی از الزام‌های صریح مرکز سلامت است؛
+    بدون این جدول فقط یک مقدار ثابت نمایش داده می‌شد که سند آن را
+    «معتبر» نمی‌داند.
+    """
+
+    def __init__(self, db: Database):
+        self.db = db
+
+    def record(self, path: str, size: int, ok: bool, note: str | None = None) -> None:
+        # فقط ۲۰ رکورد آخر نگه داشته می‌شود (سیاست نگهداری §۶۵)
+        self.db.execute(
+            "INSERT INTO backup_log (path, size_bytes, status, note, created_at)"
+            " VALUES (?,?,?,?,?)",
+            (path, size, "ok" if ok else "failed", note, NOW()),
+        )
+        self.db.execute(
+            "DELETE FROM backup_log WHERE id NOT IN "
+            "(SELECT id FROM backup_log ORDER BY created_at DESC LIMIT 20)"
+        )
+
+    def last(self):
+        return self.db.query_one(
+            "SELECT * FROM backup_log WHERE status='ok' ORDER BY created_at DESC LIMIT 1"
+        )

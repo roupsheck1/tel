@@ -376,11 +376,13 @@ class InstagramInbox:
             await self.engine._safe_notify(telegram_id, f"❌ درخواست شما پذیرفته نشد:\n{result}")
         else:
             log.info("درخواست %s با شناسه %s ثبت شد", shortcode, result)
-            await self.engine._safe_notify(
-                telegram_id,
-                "📥 درخواست شما ثبت شد و در صف پردازش است.\n"
-                f"🔖 شناسه پیگیری: <code>#{result}</code>\n"
-                "فایل به‌محض آماده‌شدن همین‌جا ارسال می‌شود.")
+            # اعلان ورود به صف — قابل خاموش‌کردن از پنل (§۳۱ سند ۲)
+            if self.engine.d.settings.get("notify.on_queue", True):
+                await self.engine._safe_notify(
+                    telegram_id,
+                    "📥 درخواست شما ثبت شد و در صف پردازش است.\n"
+                    f"🔖 شناسه پیگیری: <code>#{result}</code>\n"
+                    "فایل به‌محض آماده‌شدن همین‌جا ارسال می‌شود.")
 
     # ---------- ابزار ----------
     def _send_dm(self, thread_id: str, text: str) -> None:

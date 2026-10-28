@@ -117,7 +117,8 @@ async def run() -> None:
     # --- راه‌اندازی اجزا ---
     await engine.start()
     inbox.start_background()
-    tasks = start_all(bot, services)
+    # پشتیبان‌گیری خودکار دوره‌ای (§۴۲ سند ۲) — در ذخیره‌سازی پایدار (ولوم)
+    tasks = start_all(bot, services, backup_dir=cfg.storage_dir / "backups")
 
     log.info("ربات راه‌اندازی شد. polling آغاز می‌شود...")
     try:

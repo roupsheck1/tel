@@ -139,6 +139,7 @@ async def users_card(cb: CallbackQuery, services: Services, ctx=None):
         [("🎁 هدیه اشتراک", f"a:users:gift:{uid}")],
         [("➕ تمدید (روز)", f"a:users:extend:{uid}")],
         [("⚡️ استثنای فردی", f"a:users:exception:{uid}")],
+        [("👥 افزودن به گروه", f"a:users:addtogroup:{uid}")],
         [("🔗 قطع اتصال اینستاگرام", f"a:users:unlink:{uid}")],
     ]
     kbrows.append(ak.BACK_HOME_ROW)
@@ -213,6 +214,29 @@ async def users_unlink(cb: CallbackQuery, services: Services, ctx=None):
     services.audit_repo.log(ctx.telegram_id, "unlink_instagram", "user", str(uid),
                             new_value={"ig": ig})
     await cb.answer(f"اتصال @{ig} قطع شد." if ig else "اتصالی نبود.")
+    await users_card(cb, services)
+
+
+@router.callback_query(F.data.startswith("a:users:addtogroup:"))
+@require(PERM_EDIT_USERS)
+async def users_addtogroup(cb: CallbackQuery, state: FSMContext, services: Services, ctx=None):
+    """افزودن کاربر به گروه دستی (§۹ سند ۲: «افزودن به گروه‌های دستی»)."""
+    uid = cb.data.split(":")[3]
+    groups = services.groups_repo.list()
+    kbrows = [[(g["name"], f"a:users:addgroup2:{uid}:{g['id']}")] for g in groups]
+    kbrows.append(ak.BACK_HOME_ROW)
+    await edit_or_answer(cb, f"👥 کاربر <code>{uid}</code> به کدام گروه اضافه شود؟",
+                        ak.kb(kbrows))
+
+
+@router.callback_query(F.data.startswith("a:users:addgroup2:"))
+@require(PERM_EDIT_USERS)
+async def users_addtogroup2(cb: CallbackQuery, services: Services, ctx=None):
+    _, _, _, uid, gid = cb.data.split(":")
+    added = services.groups_repo.add_members(int(gid), [int(uid)])
+    services.audit_repo.log(ctx.telegram_id, "add_group_member", "group", gid,
+                            new_value={"user": int(uid), "added": added})
+    await cb.answer("عضو اضافه شد ✅" if added else "قبلاً عضو بوده.")
     await users_card(cb, services)
 
 
@@ -524,14 +548,46 @@ async def downloads_queue(cb: CallbackQuery, services: Services, ctx=None):
     for key, label in labels.items():
         if counts.get(key):
             lines.append(f"• {label}: {counts[key]}")
-    recent = services.downloads_repo.recent(limit=10)
-    lines += ["", "آخرین درخواست‌ها:"]
-    for r in recent:
-        lines.append(
-            f"#{r['id']} {mention(r['user_id'], r['username'])} {r['shortcode']} — "
-            f"{labels.get(r['status'], r['status'])}"
-        )
-    await edit_or_answer(cb, "\n".join(lines), ak.with_back([]))
+    queued = services.downloads_repo.queued(limit=15)
+    kbrows = []
+    if queued:
+        lines += ["", "درخواست‌های در صف (اولویت با دکمه قابل تغییر است — §۶۴):"]
+        for r in queued:
+            lines.append(
+                f"#{r['id']} {mention(r['user_id'], None)} {r['shortcode']} — اولویت {r['priority']}"
+            )
+            kbrows.append([(f"⏫ اولویت #{r['id']} → {r['priority'] + 1}",
+                            f"a:downloads:prio:{r['id']}:{r['priority'] + 1}")])
+    lines += [
+        "",
+        "🔎 برای پیگیری یک درخواست، شناسه پیگیری (مثل #۱۲) را جست‌وجو کن.",
+    ]
+    kbrows.append([("🔎 جستجوی شناسه پیگیری", "a:downloads:track:")])
+    await edit_or_answer(cb, "\n".join(lines), ak.with_back(kbrows))
+
+
+@router.callback_query(F.data.startswith("a:downloads:prio:"))
+@require(PERM_TECH_SETTINGS)
+async def downloads_set_priority(cb: CallbackQuery, services: Services, ctx=None):
+    """افزایش اولویت دستی درخواست صف (§۶۴: مدیر بتواند درخواست را به اولویت بالاتر برد)."""
+    parts = cb.data.split(":")
+    rid, prio = int(parts[3]), int(parts[4])
+    ok = services.downloads_repo.set_priority(rid, prio)
+    services.audit_repo.log(ctx.telegram_id, "set_queue_priority", "request", str(rid),
+                            new_value={"priority": prio}, result="success" if ok else "noop")
+    await cb.answer("اولویت اعمال شد ✅" if ok else "درخواست دیگر در صف نیست.")
+    await downloads_queue(cb, services)
+
+
+@router.callback_query(F.data == "a:downloads:track:")
+@require(PERM_TECH_SETTINGS)
+async def downloads_track_prompt(cb: CallbackQuery, state: FSMContext, services: Services, ctx=None):
+    await ask_input(
+        state, cb,
+        "🔎 شناسه پیگیری درخواست را بفرست (فقط عدد، مثل: 12)\n"
+        "(کاربر این شناسه را از ربات گرفته و به پشتیبانی می‌دهد — §۵۶)",
+        "downloads:track",
+    )
 
 
 @router.callback_query(F.data == "a:downloads:failed:")

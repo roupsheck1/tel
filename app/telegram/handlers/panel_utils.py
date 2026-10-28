@@ -46,9 +46,25 @@ async def edit_or_answer(cb: CallbackQuery, text: str, reply_markup=None) -> Non
 
 
 def require(permission: str):
-    """دکوراتور بررسی مجوز برای هر عملیات پنل (سمت سرور)."""
+    """دکوراتور بررسی مجوز برای هر عملیات پنل (سمت سرور).
+
+    سازگار با هر دو ترتیب امضای هندلر:
+    - (cb, services, ctx=None)
+    - (cb, state, services, ctx=None)   ← هندلرهای دارای ورودی FSM
+    aiogram سرویس‌ها و state را به‌صورت کلیدواژه تزریق می‌کند؛ این
+    دکوراتور پارامترها را موقعیتی می‌سازد تا fn با ترتیب امضایش درست
+    فراخوانی شود (پیش‌تر ترتیب state-first خطای «multiple values» می‌داد
+    و همه هندلرهای FSM ادمین را در runtime می‌شکست).
+    """
 
     def decorator(fn):
+        import inspect
+
+        sig = inspect.signature(fn)
+        param_names = list(sig.parameters)
+        # آیا fn پارامتر state دارد؟ (cb, state, services, ctx)
+        has_state = len(param_names) >= 3 and param_names[1] == "state"
+
         @functools.wraps(fn)
         async def wrapped(event, services: Services, *args, **kwargs):
             user_id = event.from_user.id
@@ -60,6 +76,12 @@ def require(permission: str):
                 elif isinstance(event, Message):
                     await event.reply(str(e))
                 return None
+            state = kwargs.pop("state", None)
+            if has_state:
+                if state is None and args:
+                    state = args[0]
+                    args = args[1:]
+                return await fn(event, state, services, *args, ctx=ctx, **kwargs)
             return await fn(event, services, *args, ctx=ctx, **kwargs)
 
         return wrapped

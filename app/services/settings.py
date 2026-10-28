@@ -86,6 +86,27 @@ DEFAULTS: dict[str, object] = {
     "notify.expiry_warn_days": 3,
     "notify.admin_errors": True,
 
+    # --- اعلان‌های قابل تنظیم (§۳۱ سند ۲: مدیر بتواند هر اعلان را خاموش/روشن کند) ---
+    "notify.on_queue": True,          # ورود درخواست به صف
+    "notify.on_success": True,        # تحویل موفق
+    "notify.on_failure": True,        # شکست عملیات
+    "notify.on_order": True,          # دریافت سفارش/رسید جدید (به مدیران)
+    "notify.on_expiry": True,         # یادآوری انقضای اشتراک
+
+    # --- کلیدهای قابلیت (§۵۳ سند ۲: هر قابلیت مهم مستقل قابل خاموش‌کردن) ---
+    "feature.story_download": True,     # دریافت استوری
+    "feature.large_files": True,        # فایل حجیم (> ۵۰MB با فشرده‌سازی)
+    "feature.promo_codes": True,        # کدهای اشتراک
+    "feature.manual_payment": True,     # پرداخت دستی
+    "feature.broadcast": True,          # پیام همگانی
+    "feature.trial": True,              # پلن آزمایشی
+
+    # --- حالت نگهداری (§۵۴ سند ۲) ---
+    # new_requests: توقف ثبت درخواست جدید
+    # continue_queue: ادامه/توقف درخواست‌های در جریان
+    "maintenance.block_new_requests": True,
+    "maintenance.continue_queue": True,
+
     # --- آزمایش (بخش ۱۰.۴) ---
     "trial.limit_scope": "per_plan",  # per_plan | global
 }
