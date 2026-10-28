@@ -228,3 +228,268 @@ def test_with_client_relogin_on_auth_error(monkeypatch):
     assert client.with_client(fn) == "OK"
     assert client.login_calls == 1
     assert calls["fn"] == 2
+
+
+# ---------- دانلود از API خام (فیکس عکس/کاروسل — بازتولید باگ واقعی) ----------
+
+from app.instagram.content import download_from_media_dict  # noqa: E402
+
+# شکل دقیق پاسخ واقعی پست کاربر (آیتم کاروسل عکس bahman_wp):
+# media_type=8 + carousel_media خالی + like_count=null → پیاده‌سازی قدیمی
+# album_download «بدون خطا و بدون فایل» برمی‌گشت (سکوت کامل) و yt-dlp هم
+# ذاتاً عکس را نمی‌تواند بگیرد → «No video formats found» کاربر.
+USER_BUG_MEDIA = {
+    "media_type": 8,
+    "product_type": "carousel_item",
+    "pk": "4017169569784828890",
+    "like_count": None,      # همان چیزی که pydantic کتابخانه را می‌شکست
+    "comment_count": None,
+    "carousel_media": [],    # کاروسلِ خالی → قبلاً سکوت کامل
+    "video_versions": [],
+    "image_versions2": {"candidates": [
+        {"url": "https://cdn.example.net/v/photo_small.jpg?oe=1", "width": 320, "height": 400},
+        {"url": "https://cdn.example.net/v/photo_big.jpg?oe=1", "width": 1440, "height": 1800},
+    ]},
+    "user": {"username": "bahman_wp"},
+}
+
+
+class FakeResp:
+    def __init__(self, data=b"x" * 100):
+        self.headers = {"Content-Length": str(len(data))}
+        self._data = data
+
+    def raise_for_status(self):
+        pass
+
+    def iter_content(self, chunk_size=1 << 20):
+        yield self._data
+
+
+def _patch_get(monkeypatch, data=b"x" * 100):
+    seen: list[str] = []
+    monkeypatch.setattr(
+        "app.instagram.content.requests.get",
+        lambda url, stream=True, timeout=None, headers=None: (seen.append(url), FakeResp(data))[1],
+    )
+    return seen
+
+
+def test_raw_download_carousel_item_photo(tmp_path, monkeypatch):
+    """باگ اصلی کاربر: آیتم کاروسل (media_type=8، carousel خالی) باید عکسش دانلود شود."""
+    seen = _patch_get(monkeypatch, b"\xff\xd8JFIFDATA" * 20)
+    files = download_from_media_dict(USER_BUG_MEDIA, tmp_path)
+    assert len(files) == 1
+    assert files[0].exists() and files[0].stat().st_size > 0
+    # بهترین کیفیت (بزرگ‌ترین ابعاد) انتخاب شده است
+    assert "photo_big.jpg" in seen[0]
+    assert files[0].name.startswith("bahman_wp_4017169569784828890")
+    assert files[0].suffix == ".jpg"
+
+
+def test_raw_download_mixed_carousel(tmp_path, monkeypatch):
+    """کاروسل ترکیبی: عکس + ویدیو → دو فایل با پسوند درست و بهترین کیفیت."""
+    seen = _patch_get(monkeypatch)
+    media = {
+        "pk": "998877",
+        "user": {"username": "some.user"},
+        "carousel_media": [
+            {"pk": "1", "media_type": 1, "video_versions": [],
+             "image_versions2": {"candidates": [
+                 {"url": "https://cdn.example.net/x1.jpg", "width": 1080, "height": 1080}]}},
+            {"pk": "2", "media_type": 2,
+             "video_versions": [
+                 {"url": "https://cdn.example.net/v2_720.mp4", "width": 720, "height": 1280},
+                 {"url": "https://cdn.example.net/v2_1080.mp4", "width": 1080, "height": 1920}],
+             "image_versions2": {"candidates": [
+                 {"url": "https://cdn.example.net/x2.jpg", "width": 480, "height": 854}]}},
+        ],
+    }
+    files = download_from_media_dict(media, tmp_path)
+    assert len(files) == 2
+    names = sorted(f.name for f in files)
+    assert names == ["some.user_998877_1.jpg", "some.user_998877_2.mp4"]
+    # ویدیو: بهترین کیفیت (1080) انتخاب شده، نه 720 و نه تصویر بندانگشتی
+    assert any("v2_1080.mp4" in u for u in seen)
+
+
+def test_raw_download_video_post_prefers_video(tmp_path, monkeypatch):
+    """پست ویدیویی: video_versions مقدم بر عکس است و mp4 ذخیره می‌شود."""
+    seen = _patch_get(monkeypatch, b"\x00\x00\x00\x18ftypmp42" * 8)
+    media = {
+        "pk": "777",
+        "user": {"username": "videouser"},
+        "video_versions": [{"url": "https://cdn.example.net/reel.mp4", "width": 1080, "height": 1920}],
+        "image_versions2": {"candidates": [
+            {"url": "https://cdn.example.net/cover.jpg", "width": 480, "height": 854}]},
+    }
+    files = download_from_media_dict(media, tmp_path)
+    assert len(files) == 1 and files[0].suffix == ".mp4"
+    assert all("reel.mp4" in u for u in seen)
+
+
+def test_raw_download_raises_when_nothing_downloadable(tmp_path):
+    """بدون هیچ video/image versions → خطای روشن، نه سکوت."""
+    with pytest.raises(RuntimeError) as ei:
+        download_from_media_dict({"pk": "5", "user": {"username": "u"}}, tmp_path)
+    assert "فایل قابل دریافت" in str(ei.value)
+
+
+def test_raw_download_partial_file_not_left_behind(tmp_path, monkeypatch):
+    """شکست وسط دانلود نباید فایل .part یا ناقص باقی بگذارد."""
+    class BrokenResp(FakeResp):
+        def iter_content(self, chunk_size=1 << 20):
+            yield b"short"
+
+    monkeypatch.setattr(
+        "app.instagram.content.requests.get",
+        lambda url, stream=True, timeout=None, headers=None: BrokenResp(b"much-longer-expected"),
+    )
+    media = {"pk": "9", "user": {"username": "u"},
+             "image_versions2": {"candidates": [
+                 {"url": "https://cdn.example.net/p.jpg", "width": 800, "height": 800}]}}
+    with pytest.raises(RuntimeError):
+        download_from_media_dict(media, tmp_path)
+    assert list(tmp_path.iterdir()) == []  # هیچ فایل ناقصی نمانده
+
+
+# ---------- پسوند واقعی از محتوای فایل (heic→jpg) ----------
+
+from app.instagram.content import _collect_downloaded, _sniff_ext  # noqa: E402
+
+
+def test_sniff_ext_magic_bytes():
+    assert _sniff_ext(b"\xff\xd8\xff\xe0xx", "jpg") == "jpg"
+    assert _sniff_ext(b"\x89PNG\r\n\x1a\n", "jpg") == "png"
+    assert _sniff_ext(b"RIFFxxxxWEBP", "jpg") == "webp"
+    assert _sniff_ext(b"\x00\x00\x00\x18ftypmp42xxx", "mp4") == "mp4"
+    assert _sniff_ext(b"\x00\x00\x00\x18ftypheicxxx", "jpg") == "heic"
+    assert _sniff_ext(b"whatever", "mp4") == "mp4"   # ناشناخته → پیش‌فرض زمینه
+
+
+def test_heic_url_with_jpeg_content_saved_as_jpg(tmp_path, monkeypatch):
+    """باگ واقعی پست کاربر: همهٔ ۱۴ کاندیدای عکس URLهای «.heic» دارند اما
+    CDN محتوای JPEG می‌دهد؛ فایل باید با پسوند واقعی jpg ذخیره شود تا
+    هم find_media ببیند و هم تلگرام به‌عنوان عکس بپذیرد."""
+    seen = _patch_get(monkeypatch, b"\xff\xd8\xff\xe0JFIFDATA" * 20)
+    media = {  # شکل واقعی پاسخ (کاندیداهای heic فقط)
+        "pk": "4017169569784828890",
+        "user": {"username": "bahman_wp"},
+        "video_versions": [],
+        "image_versions2": {"candidates": [
+            {"url": "https://cdn.example.net/v/photo_n.heic?oe=1", "width": 1440, "height": 1800},
+            {"url": "https://cdn.example.net/v/photo_small_n.heic?oe=1", "width": 320, "height": 400},
+        ]},
+    }
+    files = download_from_media_dict(media, tmp_path)
+    assert len(files) == 1
+    assert files[0].suffix == ".jpg", "محتوای JPEG باید با پسوند jpg ذخیره شود"
+    assert "photo_n.heic" in seen[0]
+    assert files[0].name == "bahman_wp_4017169569784828890.jpg"
+
+
+def test_real_heic_content_kept_as_heic(tmp_path, monkeypatch):
+    """اگر محتوا واقعاً HEIC بود (نه JPEG)، نام heic حفظ می‌شود تا به‌عنوان
+    سند (document) قابل ارسال بماند، نه اینکه به‌اشتباه jpg نام‌گذاری شود."""
+    _patch_get(monkeypatch, b"\x00\x00\x00\x18ftypheicHEICDATA" * 10)
+    media = {"pk": "5", "user": {"username": "u"},
+             "image_versions2": {"candidates": [
+                 {"url": "https://cdn.example.net/x_n.heic", "width": 800, "height": 800}]}}
+    files = download_from_media_dict(media, tmp_path)
+    assert files[0].suffix == ".heic"
+
+
+def test_collect_downloaded_renames_library_saved_heic(tmp_path):
+    """story_download کتابخانه فایل را از URL (heic) نام‌گذاری می‌کند؛
+    _collect_downloaded باید پسوند را با محتوای واقعی (JPEG) درست کند."""
+    f = tmp_path / "story_123_n.heic"
+    f.write_bytes(b"\xff\xd8\xff\xe0JFIF" * 30)
+    (tmp_path / "cookies.txt").write_text("x")
+    (tmp_path / "partial.part").write_bytes(b"x")
+    files = _collect_downloaded(tmp_path)
+    assert [p.name for p in files] == ["story_123_n.jpg"]
+    assert (tmp_path / "story_123_n.jpg").exists()
+    assert not (tmp_path / "story_123_n.heic").exists()
+
+
+# ---------- مسیر instagrapi جدید (private_request خام) ----------
+
+class RawCl:
+    """کلاینت ساختگی با مسیر API خام (private_request)."""
+
+    def __init__(self, media_dict):
+        self.media_dict = media_dict
+        self.private_calls: list[str] = []
+        self.media_info_calls = 0
+        self.album_calls = 0
+
+    def media_pk_from_url(self, url):
+        return 4017169569784828890
+
+    def private_request(self, endpoint, **kw):
+        self.private_calls.append(endpoint)
+        return {"items": [self.media_dict]}
+
+    # متدهای قدیمی شکننده — نباید در مسیر جدید صدا زده شوند
+    def media_info(self, pk):
+        self.media_info_calls += 1
+        raise AssertionError("media_info قدیمی نباید صدا زده شود")
+
+    def album_download(self, pk, folder):
+        self.album_calls += 1
+        raise AssertionError("album_download قدیمی نباید صدا زده شود")
+
+
+def test_via_instagrapi_uses_raw_endpoint_and_downloads_photo(monkeypatch, tmp_path):
+    """پست عکسیِ کاربر از مسیر API خام دانلود می‌شود، دور از pydantic شکننده."""
+    _patch_get(monkeypatch, b"\xff\xd8JFIF" * 30)
+    cl = RawCl(USER_BUG_MEDIA)
+    client = FakeIGClient(cl)
+    dl = InstagramContentDownloader(client)
+    files = dl.download("https://www.instagram.com/reel/De_2nCZiJPa/",
+                        "De_2nCZiJPa", tmp_path / "d", "reel")
+    assert len(files) == 1 and files[0].suffix == ".jpg"
+    assert cl.private_calls == ["media/4017169569784828890/info/"]
+    assert cl.media_info_calls == 0 and cl.album_calls == 0
+
+
+def test_via_instagrapi_no_more_silent_empty(monkeypatch, tmp_path):
+    """اگر instagrapi بدون فایل برگردد، علتش گزارش می‌شود (نه سکوت)."""
+    cl = RawCl({"pk": "5", "user": {"username": "u"}, "like_count": None})
+    client = FakeIGClient(cl)
+    dl = InstagramContentDownloader(client)
+    # yt-dlp هم شکست می‌خورد (بدون شبکه واقعی، subprocess ساختگی لازم نیست؛
+    # چون download فقط تا رسیدن به خطای instagrapi می‌رسد و سپس yt-dlp را
+    # با نشست بی‌کوکی اجرا می‌کند — در محیط آزمون __main__ yt_dlp موجود است
+    # اما بدون شبکه شکست می‌خورد؛ برای قطعیت، subprocess شبیه‌سازی می‌شود):
+    _patch_subprocess(monkeypatch, [FakeProc(1, b"ERROR: [Instagram] x: No video formats found!\n")], [])
+    with pytest.raises(RuntimeError) as ei:
+        dl.download("https://www.instagram.com/p/xyz/", "xyz", tmp_path / "d", "post")
+    msg = str(ei.value)
+    # علت هر دو روش دیده می‌شود؛ دیگر سکوتِ روش اول وجود ندارد
+    assert "instagrapi" in msg
+    assert "فایل قابل دریافت" in msg          # علت واقعی روش اول
+    assert "این محتوا ویدیو نیست" in msg       # نگاشت فارسی خطای yt-dlp
+
+
+def test_ytdlp_hint_no_video_formats_found():
+    reason = _ytdlp_reason(
+        "ERROR: [Instagram] De_2nCZiJPa: No video formats found!; "
+        "please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q=...")
+    assert reason == "این محتوا ویدیو نیست (عکس‌ها از مسیر اصلی دریافت می‌شوند)"
+
+
+def test_via_instagrapi_story_missing_file_raises(monkeypatch, tmp_path):
+    """استوری: اگر فایلی ذخیره نشد باید خطا داده شود، نه بازگشت خالی ساکت."""
+    monkeypatch.setattr("app.instagram.client.time.sleep", lambda s: None)
+
+    class StoryCl(RawCl):
+        def story_download(self, story_pk, filename="", folder=""):
+            return Path(folder) / "nothing.mp4"  # فایل واقعی نمی‌نویسد
+
+    client = FakeIGClient(StoryCl(USER_BUG_MEDIA))
+    dl = InstagramContentDownloader(client)
+    _patch_subprocess(monkeypatch, [FakeProc(1, b"ERROR: [instagram:story] 1: no formats\n")], [])
+    with pytest.raises(RuntimeError) as ei:
+        dl.download("https://www.instagram.com/stories/u/123/", "123_456", tmp_path / "d", "story")
+    assert "استوری دریافت شد اما فایلی ذخیره نشد" in str(ei.value)

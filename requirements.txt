@@ -3,3 +3,4 @@ instagrapi>=3.0
 yt-dlp>=2026.10.26
 pydantic>=2.7
 pydantic-settings>=2.3
+requests>=2.31

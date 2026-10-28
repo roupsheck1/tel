@@ -4,8 +4,8 @@ WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir --prefix=/install \
-    "aiogram>=3.13,<4" "instagrapi>=3.0" "yt-dlp>=2025.1.1" \
-    "pydantic>=2.7" "pydantic-settings>=2.3"
+    "aiogram>=3.13,<4" "instagrapi>=3.0" "yt-dlp>=2026.10.26" \
+    "pydantic>=2.7" "pydantic-settings>=2.3" "requests>=2.31"
 
 # ---- مرحله اجرا ----
 FROM python:3.12-slim
