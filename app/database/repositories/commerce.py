@@ -464,6 +464,13 @@ class OrdersRepo:
             (NOW(),),
         ).rowcount
 
+    def count(self, status: str | None = None) -> int:
+        """تعداد سفارش‌ها (با فیلتر وضعیت اختیاری) — برای صفحه‌بندی پنل."""
+        if status:
+            return int(self.db.scalar(
+                "SELECT COUNT(*) FROM orders WHERE status=?", (status,)) or 0)
+        return int(self.db.scalar("SELECT COUNT(*) FROM orders") or 0)
+
     def stats(self) -> dict:
         def cnt(status):
             return int(self.db.scalar("SELECT COUNT(*) FROM orders WHERE status=?", (status,)) or 0)

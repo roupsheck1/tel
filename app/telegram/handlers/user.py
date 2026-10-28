@@ -17,6 +17,7 @@ from aiogram.types import CallbackQuery, Message
 
 from ...services import Services
 from ...utils import normalize_digits
+from .admin_orders import notify_admins_new_receipt
 
 log = logging.getLogger("handlers.user")
 router = Router()
@@ -162,6 +163,9 @@ async def cb_paydone(callback: CallbackQuery, state: FSMContext, services: Servi
         await state.set_state(ReceiptStates.awaiting_receipt)
         await state.update_data(order_id=order_id)
         await callback.message.answer("لطفاً 📷 رسید پرداخت را همین‌جا بفرست.")
+        # اعلان «اعلام پرداخت» به مدیران مجاز (بخش ۲۴ سند ۲)
+        await notify_admins_new_receipt(
+            callback.bot, services, services.orders_repo.get(order_id))
     await callback.answer(msg)
 
 
@@ -183,6 +187,9 @@ async def receipt_photo(message: Message, state: FSMContext, services: Services)
     await message.reply(msg)
     if ok:
         await state.clear()
+        # اعلان «رسید دریافت‌شده» به مدیران مجاز (بخش ۲۴ سند ۲ — گام ۸ بخش ۱۳)
+        await notify_admins_new_receipt(
+            message.bot, services, services.orders_repo.get(order_id))
 
 
 # ============================ سفارش‌های من ============================

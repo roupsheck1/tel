@@ -11,12 +11,14 @@ def kb(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
     ])
 
 
-# ---------- منوی اصلی (بخش ۱۶.۲) ----------
+# ---------- منوی اصلی (بخش ۱۶.۲ — ۱۲ بخش طبق سند ۲) ----------
 MAIN_MENU = kb([
     [("👥 کاربران", "a:users:menu:")],
-    [("💎 اشتراک‌ها و پلن‌ها", "a:subs:menu:")],
+    [("💎 مدیریت اشتراک‌ها", "a:subs:menu:")],
+    [("🛍 پلن‌ها و قیمت‌گذاری", "a:subs:plans:")],
+    [("🧾 سفارش‌ها و پرداخت‌ها", "a:orders:menu:")],
     [("📊 آمار و گزارش‌ها", "a:stats:menu:")],
-    [("📥 دانلودها و صف", "a:downloads:menu:")],
+    [("📥 مدیریت دانلودها", "a:downloads:menu:")],
     [("🎟 کدهای اشتراک", "a:codes:menu:")],
     [("📢 پیام همگانی", "a:broadcast:menu:")],
     [("🛠 تنظیمات ربات", "a:settings:menu:")],
@@ -57,6 +59,13 @@ def menu_of(section: str) -> InlineKeyboardMarkup:
             [("📋 وضعیت صف", "a:downloads:queue:")],
             [("❌ خطاها و تلاش مجدد", "a:downloads:failed:")],
             [("⚙️ ظرفیت سرور", "a:downloads:capacity:")],
+        ],
+        "orders": [
+            [("🔔 در انتظار بررسی", "a:orders:pending:0")],
+            [("🧾 همه سفارش‌ها", "a:orders:list:all:0")],
+            [("✅ تأییدشده‌ها", "a:orders:list:confirmed:0")],
+            [("❌ ردشده‌ها", "a:orders:list:rejected:0")],
+            [("📊 خلاصه وضعیت سفارش‌ها", "a:orders:stats:")],
         ],
         "codes": [
             [("➕ ساخت کد", "a:codes:new:")],

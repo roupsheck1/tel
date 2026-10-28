@@ -24,11 +24,13 @@ def test_dispatcher_registers_fallback_last():
     from app.main import build_dispatcher
     from app.telegram.handlers import admin as ah
     from app.telegram.handlers import admin_more as amh
+    from app.telegram.handlers import admin_orders as aoh
 
     dp = build_dispatcher(None)  # services فقط در میدلور ذخیره می‌شود
     routers = list(dp.sub_routers)
-    assert len(routers) == 4
+    assert len(routers) == 5
     assert routers[0] is uh.router
     assert routers[1] is ah.router
     assert routers[2] is amh.router
-    assert routers[3] is uh.fallback
+    assert routers[3] is aoh.router
+    assert routers[4] is uh.fallback

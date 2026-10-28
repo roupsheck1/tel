@@ -365,13 +365,22 @@ class InstagramInbox:
         return True
 
     async def _submit(self, telegram_id: int, url: str, shortcode: str, kind: str) -> None:
-        """ثبت درخواست در موتور؛ در صورت رد، دلیل به کاربر در تلگرام اعلام می‌شود."""
+        """ثبت درخواست در موتور؛ نتیجه با شناسه پیگیری به کاربر اعلام می‌شود.
+
+        شناسه پیگیری (بخش ۵۶ سند ۲): کاربر می‌تواند شناسه را به پشتیبانی بدهد
+        و مدیر بدون جست‌وجو در لاگ‌ها مسیر درخواست را ببیند.
+        """
         ok, result = await self.engine.submit(telegram_id, url, shortcode, kind)
         if not ok:
             log.info("درخواست %s از %s رد شد: %s", shortcode, telegram_id, result)
             await self.engine._safe_notify(telegram_id, f"❌ درخواست شما پذیرفته نشد:\n{result}")
         else:
             log.info("درخواست %s با شناسه %s ثبت شد", shortcode, result)
+            await self.engine._safe_notify(
+                telegram_id,
+                "📥 درخواست شما ثبت شد و در صف پردازش است.\n"
+                f"🔖 شناسه پیگیری: <code>#{result}</code>\n"
+                "فایل به‌محض آماده‌شدن همین‌جا ارسال می‌شود.")
 
     # ---------- ابزار ----------
     def _send_dm(self, thread_id: str, text: str) -> None:

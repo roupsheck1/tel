@@ -270,6 +270,25 @@ class AdminsRepo:
             "LEFT JOIN users u ON u.telegram_id=a.telegram_id WHERE a.is_active=1"
         )
 
+    def ids_with_permission(self, permission: str) -> list[int]:
+        """شناسه مدیران فعالی که مجوز مشخص را دارند (برای اعلان‌های بخش ۲۴ سند).
+
+        نقش با مجوز «*» (مدیر اصلی) همه مجوزها را دارد.
+        """
+        rows = self.db.query(
+            "SELECT a.telegram_id, r.permissions FROM admins a "
+            "JOIN roles r ON r.id=a.role_id WHERE a.is_active=1"
+        )
+        out = []
+        for r in rows:
+            try:
+                perms = json.loads(r["permissions"])
+            except (TypeError, ValueError):
+                continue
+            if "*" in perms or permission in perms:
+                out.append(int(r["telegram_id"]))
+        return out
+
     def add(self, telegram_id: int, role_id: int, added_by: int) -> bool:
         if not self.db.query_one("SELECT 1 FROM users WHERE telegram_id=?", (telegram_id,)):
             return False

@@ -576,6 +576,30 @@ async def admin_input(message: Message, state: FSMContext, services: Services):
             services.audit_repo.log(admin_id, "edit_capacity", "settings", "capacity")
             await done("✅ ظرفیت سرور ذخیره شد.")
             return
+        # ---- سفارش‌ها: رد با دلیل (بخش ۱۳.۷ سند ۲) ----
+        if flow == "orders:reject":
+            order_id = arg
+            order = services.orders_repo.get(order_id)
+            if not order:
+                await done("سفارش پیدا نشد.")
+                return
+            ok, msg = services.order_service.reject(order_id, admin_id, text.strip())
+            if not ok:
+                await done(f"⚠️ {msg}")
+                return
+            services.audit_repo.log(admin_id, "reject_order", "order", order_id,
+                                    new_value={"reason": text.strip()[:200]})
+            await done(f"❌ سفارش <code>{order_id}</code> رد شد.")
+            # گام ۱۰ بخش ۱۳: کاربر نتیجه را دریافت می‌کند
+            try:
+                await message.bot.send_message(
+                    order["user_id"],
+                    f"❌ پرداخت سفارش <code>{order_id}</code> تأیید نشد.\n"
+                    f"دلیل: {text.strip()}\n"
+                    "در صورت اشتباه بودن، دوباره سفارش ثبت کن یا با پشتیبانی تماس بگیر.")
+            except Exception as e:
+                log.warning("اطلاع رد به کاربر %s ناموفق: %s", order["user_id"], e)
+            return
         # ---- مدیران ----
         if flow == "admins:add":
             parts = text.split()

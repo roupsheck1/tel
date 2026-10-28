@@ -24,6 +24,7 @@ from .services import Services, build_engine, build_services
 from .telegram.delivery import TelegramSender
 from .telegram.handlers import admin as admin_handlers
 from .telegram.handlers import admin_more as admin_more_handlers
+from .telegram.handlers import admin_orders as admin_orders_handlers
 from .telegram.handlers import user as user_handlers
 from .telegram.middlewares import UserMiddleware
 
@@ -40,6 +41,7 @@ def build_dispatcher(services: Services) -> Dispatcher:
     dp.include_router(user_handlers.router)
     dp.include_router(admin_handlers.router)
     dp.include_router(admin_more_handlers.router)
+    dp.include_router(admin_orders_handlers.router)
     dp.include_router(user_handlers.fallback)
     return dp
 

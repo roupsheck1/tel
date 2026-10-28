@@ -185,3 +185,85 @@ def test_subscription_expiry(services):
                         (int(time.time()) - 10, sub["id"]))
     assert services.subs_repo.sweep_expired() == 1
     assert services.subs_repo.active_of(USER1) is None
+
+
+# ============================ بخش ۴ پنل: بررسی سفارش (سند ۲ — گام‌های ۸ تا ۱۱ بخش ۱۳) ============================
+
+def test_admins_with_permission_lookup(services):
+    """یافتن مدیران دارای مجوز تأیید پرداخت برای اعلان (بخش ۲۴ سند ۲)."""
+    from app.admin.permissions import PERM_APPROVE_PAYMENT
+    # مدیر اصلی (owner) همه مجوزها را دارد
+    ids = services.admins_repo.ids_with_permission(PERM_APPROVE_PAYMENT)
+    assert OWNER in ids
+    # مدیر فنی مجوز تأیید پرداخت ندارد
+    roles = {r["name"]: r["id"] for r in services.admins_repo.roles()}
+    services.users_repo.get(999) or services.db.execute(
+        "INSERT OR IGNORE INTO users (telegram_id, registered_at) VALUES (?,?)",
+        (999, int(time.time())))
+    services.admins_repo.add(999, roles["tech"], OWNER)
+    ids2 = services.admins_repo.ids_with_permission(PERM_APPROVE_PAYMENT)
+    assert 999 not in ids2
+    # مدیر فروش مجوز تأیید دارد
+    services.admins_repo.add(998, roles["sales"], OWNER)
+    services.db.execute("INSERT OR IGNORE INTO users (telegram_id, registered_at) VALUES (?,?)",
+                        (998, int(time.time())))
+    services.admins_repo.add(998, roles["sales"], OWNER)
+    assert 998 in services.admins_repo.ids_with_permission(PERM_APPROVE_PAYMENT)
+
+
+def test_orders_count_by_status(services):
+    order_id = _order_flow_to_receipt(services)
+    assert services.orders_repo.count() == 1
+    assert services.orders_repo.count("receipt_received") == 1
+    assert services.orders_repo.count("confirmed") == 0
+    services.order_service.approve(order_id, OWNER)
+    assert services.orders_repo.count("confirmed") == 1
+    assert services.orders_repo.count("receipt_received") == 0
+
+
+def test_order_card_contains_user_and_plan(services):
+    """کارت سفارش: مدیر قبل از تأیید مشخصات کاربر و پلن را می‌بیند (۱۳.۷)."""
+    from app.telegram.handlers.admin_orders import order_card
+    order_id = _order_flow_to_receipt(services)
+    order = services.orders_repo.get(order_id)
+    card = order_card(order, services)
+    assert order_id in card
+    assert "basic_month" in card or "پایه" in card or order["plan_title"] in card
+    # کاربر یا با یوزرنیم (@u) یا با شناسه عددی نمایش داده می‌شود
+    assert f"@{order['username']}" in card or str(USER1) in card
+    assert "تومان" in card
+    assert "رسید" in card
+
+
+def test_receipt_notification_sent_to_permitted_admins(services):
+    """اعلان رسید به مدیران دارای مجوز (بخش ۲۴ سند ۲ — «اعلام پرداخت»)."""
+    import asyncio
+
+    from app.admin.permissions import PERM_APPROVE_PAYMENT
+    from app.telegram.handlers.admin_orders import notify_admins_new_receipt
+
+    class FakeBot:
+        def __init__(self):
+            self.sent: list[int] = []
+
+        async def send_message(self, chat_id, text, reply_markup=None):
+            self.sent.append(chat_id)
+
+    order_id = _order_flow_to_receipt(services)
+    order = services.orders_repo.get(order_id)
+    bot = FakeBot()
+    asyncio.run(notify_admins_new_receipt(bot, services, order))
+    expected = services.admins_repo.ids_with_permission(PERM_APPROVE_PAYMENT)
+    assert bot.sent == expected
+    assert len(bot.sent) >= 1
+
+
+def test_needs_review_marks_order(services):
+    """علامت‌گذاری «نیازمند بررسی دستی» — وضعیت مستقل (۱۳.۶)."""
+    order_id = _order_flow_to_receipt(services)
+    assert services.orders_repo.needs_review(order_id)
+    assert services.orders_repo.get(order_id)["status"] == "needs_review"
+    # تأیید پس از علامت‌گذاری همچنان ممکن است (needs_review در وضعیت‌های مجاز است)
+    ok, _ = services.order_service.approve(order_id, OWNER)
+    assert ok
+    assert services.orders_repo.get(order_id)["status"] == "confirmed"
