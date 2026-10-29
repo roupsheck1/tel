@@ -61,6 +61,9 @@ async def run() -> None:
     # --- پایگاه داده و سرویس‌ها ---
     db = Database(cfg.db_file)
     services = build_services(db, cfg.admin_ids)
+    # یوزرنیم واقعی پیج اینستاگرام برای متن‌های کاربر (خوشامد و ...)
+    if cfg.instagram_username:
+        services.settings.set("bot.ig_username", cfg.instagram_username)
     # تشخیص راه دور: مسیر مطلق دیتابیس + وضعیت نشست + تعداد داده‌های موجود
     # (اگر بعد از هر دیپلوی این شمارنده‌ها صفر شوند، یعنی ذخیره‌سازی پایدار
     # (ولوم) به سرویس وصل نیست و همه اتصال‌ها با هر دیپلوی از بین می‌روند.)

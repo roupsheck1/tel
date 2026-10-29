@@ -65,19 +65,23 @@ async def msg_open_panel(message: Message, services: Services):
     await _open_panel(message, services)
 
 
-@router.callback_query(F.data == "a:home")
-async def cb_home(cb: CallbackQuery, services: Services):
+# نکته: دکمه‌های منو «a:home:» می‌فرستند (قالب عمومی callback های پنل)؛
+# هر دو شکل (با و بدون دونقطه پایانی) پذیرفته می‌شود تا هیچ دکمه‌ای بی‌پاسخ نماند.
+@router.callback_query(F.data.in_({"a:home", "a:home:"}))
+async def cb_home(cb: CallbackQuery, state: FSMContext, services: Services):
     ctx = services.permissions.context_of(cb.from_user.id)
     if not ctx:
         await cb.answer("دسترسی ندارید.", show_alert=True)
         return
+    # پاک‌سازی هر جریان ورودی نیمه‌کاره (FSM) هنگام بازگشت به منوی اصلی
+    await state.clear()
     await edit_or_answer(cb, "🛛 پنل مدیریت — بخش موردنظر را انتخاب کن:", ak.MAIN_MENU)
 
 
-@router.callback_query(F.data == "a:cancel")
+@router.callback_query(F.data.in_({"a:cancel", "a:cancel:"}))
 async def cb_cancel(cb: CallbackQuery, state: FSMContext, services: Services):
     await state.clear()
-    await edit_or_answer(cb, "عملیات لغو شد.", ak.MAIN_MENU)
+    await edit_or_answer(cb, "✅ عملیات لغو شد.", ak.MAIN_MENU)
 
 
 @router.callback_query(F.data == "a:back")
@@ -95,7 +99,14 @@ async def users_menu(cb: CallbackQuery, services: Services, ctx=None):
 @router.callback_query(F.data == "a:users:search:")
 @require(PERM_VIEW_USERS)
 async def users_search(cb: CallbackQuery, state: FSMContext, services: Services, ctx=None):
-    await ask_input(state, cb, "🔍 شناسه عددی یا یوزرنیم کاربر را بفرست:", "users:search")
+    await ask_input(
+        state, cb,
+        "🔍 جست‌وجوی کاربر\n"
+        "شناسه عددی تلگرام یا یوزرنیم کاربر را بفرست:\n\n"
+        "📌 نمونه:\n"
+        "123456789 یا @user_name",
+        "users:search",
+    )
 
 
 @router.callback_query(F.data.startswith("a:users:list:"))
@@ -216,7 +227,14 @@ async def users_gift2(cb: CallbackQuery, services: Services, ctx=None):
 @require(PERM_CHANGE_PLAN)
 async def users_extend(cb: CallbackQuery, state: FSMContext, services: Services, ctx=None):
     uid = cb.data.split(":")[3]
-    await ask_input(state, cb, "➕ تعداد روز تمدید را بفرست (مثلاً 7):", "users:extend", uid)
+    await ask_input(
+        state, cb,
+        "➕ تمدید اشتراک\n"
+        "تعداد روز تمدید را به عدد بفرست:\n\n"
+        "📌 نمونه:\n"
+        "7",
+        "users:extend", uid,
+    )
 
 
 @router.callback_query(F.data.startswith("a:users:exception:"))
@@ -225,8 +243,16 @@ async def users_exception(cb: CallbackQuery, state: FSMContext, services: Servic
     uid = cb.data.split(":")[3]
     await ask_input(
         state, cb,
-        "⚡️ استثنا را به شکل زیر بفرست (فیلدهای دلخواه):\n"
-        "<code>concurrent=3, wait=0, hourly=20, daily=100, priority=2, days=7</code>",
+        "⚡️ استثنای فردی کاربر\n"
+        "فیلدهای دلخواه را به شکل «کلید=مقدار» بفرست (همه اختیاری‌اند):\n"
+        "1️⃣ concurrent: تعداد دانلود هم‌زمان\n"
+        "2️⃣ wait: زمان انتظار به ثانیه\n"
+        "3️⃣ hourly: سهمیه ساعتی\n"
+        "4️⃣ daily: سهمیه روزانه\n"
+        "5️⃣ priority: اولویت در صف\n"
+        "6️⃣ days: مدت اعتبار استثنا به روز\n\n"
+        "📌 نمونه:\n"
+        "concurrent=3, wait=0, hourly=20, daily=100, priority=2, days=7",
         "users:exception", uid,
     )
 
@@ -330,7 +356,14 @@ async def subs_plan_card(cb: CallbackQuery, services: Services, ctx=None):
 @require(PERM_CHANGE_PRICE)
 async def subs_price(cb: CallbackQuery, state: FSMContext, services: Services, ctx=None):
     plan_id = cb.data.split(":")[3]
-    await ask_input(state, cb, "💰 قیمت جدید (تومان) را بفرست:", "subs:price", plan_id)
+    await ask_input(
+        state, cb,
+        "💰 تغییر قیمت پلن\n"
+        "قیمت جدید را به تومان بفرست:\n\n"
+        "📌 نمونه:\n"
+        "299000",
+        "subs:price", plan_id,
+    )
 
 
 @router.callback_query(F.data.startswith("a:subs:publish:"))
@@ -413,9 +446,23 @@ async def subs_archive2(cb: CallbackQuery, services: Services, ctx=None):
 async def subs_newplan(cb: CallbackQuery, state: FSMContext, services: Services, ctx=None):
     await ask_input(
         state, cb,
-        "➕ پلن جدید — یک خط به این شکل بفرست:\n"
-        "<code>name | عنوان | قیمت | مدت_روز | هم‌زمان | انتظار_ثانیه | ظرفیت_صف</code>\n"
-        "مثال: <code>gold | طلایی | 299000 | 30 | 2 | 10 | 15</code>",
+        "➕ ساخت پلن جدید\n"
+        "می‌خواهی سریع و دقیق ثبت کنی؟ فقط این ۷ فیلد را به‌ترتیب پر کن:\n"
+        "1️⃣ name: نام انگلیسی پلن\n"
+        "2️⃣ عنوان: نام نمایشی پلن\n"
+        "3️⃣ قیمت: مبلغ پلن\n"
+        "4️⃣ مدت_روز: مدت اعتبار به روز\n"
+        "5️⃣ هم‌زمان: تعداد کاربر هم‌زمان\n"
+        "6️⃣ انتظار_ثانیه: زمان انتظار به ثانیه\n"
+        "7️⃣ ظرفیت_صف: ظرفیت صف\n\n"
+        "📌 نمونه:\n"
+        "name: gold\n"
+        "عنوان: طلایی\n"
+        "قیمت: 299000\n"
+        "مدت_روز: 30\n"
+        "هم‌زمان: 2\n"
+        "انتظار_ثانیه: 10\n"
+        "ظرفیت_صف: 15",
         "subs:newplan",
     )
 
@@ -460,8 +507,10 @@ async def subs_set_mode(cb: CallbackQuery, services: Services, ctx=None):
 async def subs_sched(cb: CallbackQuery, state: FSMContext, services: Services, ctx=None):
     await ask_input(
         state, cb,
-        "⏰ زمان شروع فروش به فرمت زیر را بفرست:\n"
-        "<code>YYYY-MM-DD HH:MM</code> (به وقت UTC)",
+        "⏰ شروع زمان‌بندی‌شده فروش\n"
+        "زمان شروع را به فرمت زیر بفرست (به وقت UTC):\n\n"
+        "📌 نمونه:\n"
+        "2026-01-15 18:30",
         "subs:sched",
     )
 
@@ -609,8 +658,11 @@ async def downloads_set_priority(cb: CallbackQuery, services: Services, ctx=None
 async def downloads_track_prompt(cb: CallbackQuery, state: FSMContext, services: Services, ctx=None):
     await ask_input(
         state, cb,
-        "🔎 شناسه پیگیری درخواست را بفرست (فقط عدد، مثل: 12)\n"
-        "(کاربر این شناسه را از ربات گرفته و به پشتیبانی می‌دهد — §۵۶)",
+        "🔎 پیگیری درخواست دانلود\n"
+        "شناسه پیگیری را بفرست (فقط عدد):\n\n"
+        "📌 نمونه:\n"
+        "12\n\n"
+        "ℹ️ کاربر این شناسه را از ربات گرفته و به پشتیبانی می‌دهد (§۵۶).",
         "downloads:track",
     )
 
@@ -653,8 +705,13 @@ async def downloads_capacity(cb: CallbackQuery, services: Services, ctx=None):
         f"• حداکثر ارسال فعال: {s.get('capacity.max_active_sends')}",
         f"• حداکثر کل صف: {s.get('capacity.max_queue_total')}",
         "",
-        "برای تغییر، مقدار جدید را به شکل زیر بفرست:",
-        "<code>dl=N, send=N, queue=N</code>",
+        "برای تغییر، مقدار جدید را به شکل «کلید=مقدار» بفرست:",
+        "1️⃣ dl: حداکثر دانلود فعال",
+        "2️⃣ send: حداکثر ارسال فعال",
+        "3️⃣ queue: حداکثر کل صف",
+        "",
+        "📌 نمونه:",
+        "dl=3, send=5, queue=100",
     ]
     await edit_or_answer(cb, "\n".join(lines), ak.with_back([[("✏️ ویرایش", "a:downloads:capedit:")]]))
 
@@ -662,5 +719,11 @@ async def downloads_capacity(cb: CallbackQuery, services: Services, ctx=None):
 @router.callback_query(F.data == "a:downloads:capedit:")
 @require(PERM_TECH_SETTINGS)
 async def downloads_capedit(cb: CallbackQuery, state: FSMContext, services: Services, ctx=None):
-    await ask_input(state, cb, "⚙️ مقادیر جدید: <code>dl=3, send=5, queue=100</code>",
-                    "downloads:capacity")
+    await ask_input(
+        state, cb,
+        "⚙️ تغییر ظرفیت سرور\n"
+        "مقادیر جدید را به شکل «کلید=مقدار» بفرست:\n\n"
+        "📌 نمونه:\n"
+        "dl=3, send=5, queue=100",
+        "downloads:capacity",
+    )

@@ -40,7 +40,7 @@ async def cmd_start(message: Message, state: FSMContext, services: Services):
     is_new = services.user_service.register(
         message.from_user.id, message.from_user.username, message.from_user.full_name
     )
-    ig_user = services.settings.get("bot.ig_username") or services.links_repo and "ربات"
+    ig_user = services.settings.get("bot.ig_username") or "ربات"
     text = services.settings.get("text.welcome").format(
         name=message.from_user.first_name or "دوست", ig_user=ig_user,
     )
@@ -66,10 +66,11 @@ async def cmd_connect(message: Message, services: Services):
         )
         return
     await message.reply(
-        "🔹 مراحل اتصال:\n"
-        "۱. در اینستاگرام به پیج ربات یک پیام بفرست (مثلاً «سلام»).\n"
-        "۲. یک کد ۶ رقمی در دایرکت می‌گیری.\n"
-        "۳. همان کد را همین‌جا بفرست تا حسابت وصل شود."
+        "🔗 اتصال اینستاگرام\n"
+        "برای وصل‌کردن حسابت، این ۳ مرحله را به‌ترتیب انجام بده:\n"
+        "1️⃣ در اینستاگرام به پیج ربات یک پیام بفرست (مثلاً «سلام»)\n"
+        "2️⃣ یک کد ۶ رقمی در دایرکت می‌گیری\n"
+        "3️⃣ همان کد را همین‌جا بفرست تا حسابت وصل شود"
     )
 
 
@@ -87,7 +88,7 @@ async def cmd_unlink(message: Message, services: Services):
 @router.message(F.text == "📊 وضعیت من")
 async def cmd_status(message: Message, services: Services):
     summary = services.user_service.status_summary(message.from_user.id)
-    lines = ["📊 وضعیت شما:", ""]
+    lines = ["📊 وضعیت شما", ""]
     link = summary["link"]
     lines.append("🔗 اینستاگرام: " + (f"متصل به @{link['ig_username']}" if link else "متصل نیست"))
     mode = summary["sales_mode"]

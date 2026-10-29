@@ -38,7 +38,11 @@ def mention(user_id: int, username: str | None) -> str:
 
 
 async def edit_or_answer(cb: CallbackQuery, text: str, reply_markup=None) -> None:
-    """ویرایش پیام پنل با fallback به ارسال جدید."""
+    """پاسخ به callback (توقف انیمیشن منتظرماندن) + ویرایش پیام پنل با fallback."""
+    try:
+        await cb.answer()
+    except Exception:
+        pass  # پاسخ تکراری یا منقضی — بی‌خطر است
     try:
         await cb.message.edit_text(text, reply_markup=reply_markup)
     except Exception:
@@ -105,14 +109,94 @@ async def ask_input(state: FSMContext, cb_or_msg, prompt: str, flow: str, arg: s
 
 
 def parse_kv(text: str) -> dict:
-    """پارس ورودی به شکل key=value با کاما."""
+    """پارس ورودی به شکل key=value با کاما.
+
+    هر سه جداکننده «=»، «:» و «،/،» و خط جدید پذیرفته می‌شود تا مدیر بتواند
+    هم به شکل <code>days=30, count=5</code> و هم <code>days: 30</code> بنویسد.
+    """
+    import re
+
+    from ...utils import normalize_digits
     out = {}
-    for part in text.replace("،", ",").split(","):
-        if "=" in part:
-            k, v = part.split("=", 1)
-            k = k.strip().lower()
-            v = v.strip()
-            if v.lstrip("-").isdigit():
-                v = int(v)
-            out[k] = v
+    for part in re.split(r"[,\n،]", normalize_digits(text)):
+        part = part.strip()
+        if not part:
+            continue
+        m = re.split(r"[=:]", part, 1)
+        if len(m) != 2:
+            continue
+        k, v = m[0].strip().lower(), m[1].strip()
+        if not k or not v:
+            continue
+        if v.lstrip("-").isdigit():
+            v = int(v)
+        out[k] = v
     return out
+
+
+# ---------- پارس ورودی «پلن جدید» ----------
+# نام‌های پذیرفته‌شده فیلدها (فارسی و انگلیسی) — نیم‌فاصله/فاصله → زیرخط
+_PLAN_FIELD_ALIASES = {
+    "name": "name", "نام": "name",
+    "title": "title", "عنوان": "title",
+    "price": "price", "قیمت": "price",
+    "days": "days", "مدت": "days", "مدت_روز": "days",
+    "concurrent": "concurrent", "همزمان": "concurrent", "هم_زمان": "concurrent",
+    "wait": "wait", "انتظار": "wait", "انتظار_ثانیه": "wait",
+    "queue": "queue", "صف": "queue", "ظرفیت_صف": "queue",
+}
+_PLAN_FIELDS = ("name", "title", "price", "days", "concurrent", "wait", "queue")
+
+
+def _norm_fa_key(k: str) -> str:
+    """نرمال‌سازی کلید فارسی: نیم‌فاصله و فاصله → زیرخط؛ حروف کوچک."""
+    k = k.strip().lower().replace("\u200c", "_").replace(" ", "_")
+    while "__" in k:
+        k = k.replace("__", "_")
+    return k
+
+
+def parse_plan_fields(text: str) -> list[str] | None:
+    """پارس ورودی «پلن جدید» — هر دو شکل پشتیبانی می‌شود:
+
+    ۱) چندخطی به شکل «کلید: مقدار» (کلیدها فارسی یا انگلیسی):
+         name: gold
+         عنوان: طلایی
+         قیمت: 299000
+         مدت_روز: 30
+         هم‌زمان: 2
+         انتظار_ثانیه: 10
+         ظرفیت_صف: 15
+
+    ۲) تک‌خطی با جداکننده «|» (شکل قدیمی):
+         gold | طلایی | 299000 | 30 | 2 | 10 | 15
+
+    خروجی: [name, title, price, days, concurrent, wait, queue] یا None.
+    """
+    import re
+
+    from ...utils import normalize_digits
+    text = normalize_digits(text.strip())
+
+    # شکل ۲: تک‌خط با جداکننده |
+    if "|" in text:
+        parts = [p.strip() for p in text.split("|")]
+        if len(parts) >= 7 and all(p for p in parts[:7]):
+            return parts[:7]
+        return None
+
+    # شکل ۱: کلید:مقدار — خط جدید یا کاما جداکننده است
+    kv: dict[str, str] = {}
+    for part in re.split(r"[,\n،]", text):
+        part = part.strip()
+        if not part:
+            continue
+        m = re.split(r"[=:]", part, 1)
+        if len(m) != 2:
+            continue
+        key = _PLAN_FIELD_ALIASES.get(_norm_fa_key(m[0].strip()))
+        if key:
+            kv[key] = m[1].strip()
+    if all(kv.get(f) for f in _PLAN_FIELDS):
+        return [kv[f] for f in _PLAN_FIELDS]
+    return None

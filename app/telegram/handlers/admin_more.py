@@ -15,7 +15,9 @@ from ...admin.permissions import (
 )
 from ...services import Services
 from ..keyboards import admin as ak
-from .panel_utils import AdminInput, ask_input, edit_or_answer, mention, parse_kv, require, ts_fa
+from .panel_utils import (
+    AdminInput, ask_input, edit_or_answer, mention, parse_kv, parse_plan_fields, require, ts_fa,
+)
 
 log = logging.getLogger("handlers.admin_more")
 router = Router(name="admin_more")
@@ -47,9 +49,14 @@ async def codes_plan(cb: CallbackQuery, state: FSMContext, services: Services, c
     plan_id = cb.data.split(":")[3]
     await ask_input(
         state, cb,
-        "🎟 مشخصات کد را بفرست:\n"
-        "<code>days=30, count=5, max_uses=1, expires_hours=48</code>\n"
-        "(count = تعداد کد؛ max_uses خالی = نامحدود)",
+        "🎟 ساخت کد اشتراک\n"
+        "مشخصات کد را به شکل «کلید=مقدار» بفرست:\n"
+        "1️⃣ days: مدت اعتبار هر کد به روز\n"
+        "2️⃣ count: تعداد کد\n"
+        "3️⃣ max_uses: سقف استفاده هر کد (خالی = نامحدود)\n"
+        "4️⃣ expires_hours: اعتبار کد به ساعت (اختیاری)\n\n"
+        "📌 نمونه:\n"
+        "days=30, count=5, max_uses=1, expires_hours=48",
         "codes:new", plan_id,
     )
 
@@ -140,10 +147,13 @@ async def groups_card(cb: CallbackQuery, services: Services, ctx=None):
 async def groups_new(cb: CallbackQuery, state: FSMContext, services: Services, ctx=None):
     await ask_input(
         state, cb,
-        "➕ گروه دستی جدید — یک خط به این شکل:\n"
-        "<code>نام_گروه | شناسه۱,شناسه۲,...</code>\n"
-        "مثال: <code>vip_users | 123456,789012</code>\n"
-        "(شناسه‌ها اختیاری‌اند؛ بعداً هم می‌توانی عضو اضافه کرد)",
+        "➕ ساخت گروه دستی جدید\n"
+        "نام گروه و شناسه اعضا را به این شکل بفرست:\n"
+        "1️⃣ نام_گروه: نام انگلیسی گروه\n"
+        "2️⃣ شناسه‌ها: شناسه‌های عددی کاربران با کاما (اختیاری)\n\n"
+        "📌 نمونه:\n"
+        "vip_users | 123456,789012\n\n"
+        "ℹ️ شناسه‌ها اختیاری‌اند؛ بعداً هم می‌توانی از کارت کاربر عضو اضافه کنی.",
         "groups:new",
     )
 
@@ -202,8 +212,14 @@ async def broadcast_audience_group(cb: CallbackQuery, state: FSMContext, service
 @require(PERM_BROADCAST)
 async def broadcast_audience(cb: CallbackQuery, state: FSMContext, services: Services, ctx=None):
     audience = cb.data.split(":")[3]
-    await ask_input(state, cb, "📝 متن پیام همگانی را بفرست (HTML ساده مجاز است):",
-                    "broadcast:text", audience)
+    await ask_input(
+        state, cb,
+        "📢 پیام همگانی\n"
+        "متن پیام را بفرست (HTML ساده مجاز است):\n\n"
+        "📌 نمونه:\n"
+        "🎉 تخفیف ویژه پایان فصل! تا ۳۰٪ تخفیف پلن‌های حرفه‌ای.",
+        "broadcast:text", audience,
+    )
 
 
 @router.callback_query(F.data.startswith("a:broadcast:confirm:"))
@@ -487,9 +503,16 @@ async def settings_free(cb: CallbackQuery, state: FSMContext, services: Services
     cfg = services.settings.free_mode_config
     await ask_input(
         state, cb,
-        "📥 پیکربندی حالت رایگان — مقادیر جدید:\n"
-        f"<code>concurrent={cfg['concurrent_downloads']}, wait={cfg['wait_seconds']}, "
-        f"queue={cfg['queue_limit']}, hourly={cfg['hourly_quota']}, daily={cfg['daily_quota']}</code>",
+        "📥 پیکربندی حالت رایگان\n"
+        "مقادیر جدید را به شکل «کلید=مقدار» بفرست:\n"
+        "1️⃣ concurrent: دانلود هم‌زمان\n"
+        "2️⃣ wait: زمان انتظار به ثانیه\n"
+        "3️⃣ queue: ظرفیت صف\n"
+        "4️⃣ hourly: سهمیه ساعتی\n"
+        "5️⃣ daily: سهمیه روزانه\n\n"
+        "📌 نمونه:\n"
+        f"concurrent={cfg['concurrent_downloads']}, wait={cfg['wait_seconds']}, "
+        f"queue={cfg['queue_limit']}, hourly={cfg['hourly_quota']}, daily={cfg['daily_quota']}",
         "settings:free",
     )
 
@@ -577,8 +600,11 @@ async def admins_add(cb: CallbackQuery, state: FSMContext, services: Services, c
     role_list = "، ".join(f"{r['name']}" for r in roles)
     await ask_input(
         state, cb,
-        "➕ افزودن مدیر — به شکل:\n<code>شناسه_عددی نقش</code>\n"
-        f"نقش‌ها: {role_list}",
+        "➕ افزودن مدیر\n"
+        "شناسه عددی و نقش مدیر جدید را به این شکل بفرست:\n\n"
+        "📌 نمونه:\n"
+        "123456789 sales\n\n"
+        f"نقش‌های موجود: {role_list}",
         "admins:add",
     )
 
@@ -710,7 +736,12 @@ async def admin_input(message: Message, state: FSMContext, services: Services):
                 )
             return
         if flow == "users:extend":
-            days = int(text)
+            from ...utils import normalize_digits
+            try:
+                days = int(normalize_digits(text))
+            except ValueError:
+                await done("⚠️ تعداد روز باید عدد باشد (مثل 7).")
+                return
             sub = services.subs_repo.active_of(int(arg))
             if not sub:
                 await done("اشتراک فعلی برای تمدید وجود ندارد؛ از «هدیه» استفاده کن.")
@@ -730,33 +761,53 @@ async def admin_input(message: Message, state: FSMContext, services: Services):
             return
         # ---- پلن‌ها ----
         if flow == "subs:newplan":
-            parts = [p.strip() for p in text.split("|")]
-            if len(parts) < 7:
-                await done("⚠️ همه ۷ فیلد لازم است. نمونه:\ngold | طلایی | 299000 | 30 | 2 | 10 | 15")
+            fields = parse_plan_fields(text)
+            if not fields:
+                await done(
+                    "⚠️ هر ۷ فیلد لازم است. نمونه صحیح:\n\n"
+                    "name: gold\n"
+                    "عنوان: طلایی\n"
+                    "قیمت: 299000\n"
+                    "مدت_روز: 30\n"
+                    "هم‌زمان: 2\n"
+                    "انتظار_ثانیه: 10\n"
+                    "ظرفیت_صف: 15"
+                )
                 return
             from ...services.plans import PlanConfig
-            cfg = PlanConfig(
-                price=int(parts[2]), duration_value=int(parts[3]), duration_unit="day",
-                concurrent_downloads=int(parts[4]), wait_seconds=int(parts[5]),
-                queue_limit=int(parts[6]),
-            )
-            ok, res = services.plan_service.create_plan(parts[0], parts[1], "", cfg, admin_id)
+            name, title, price, days, concurrent, wait, queue = fields
+            try:
+                cfg = PlanConfig(
+                    price=int(price), duration_value=int(days), duration_unit="day",
+                    concurrent_downloads=int(concurrent), wait_seconds=int(wait),
+                    queue_limit=int(queue),
+                )
+            except ValueError:
+                await done("⚠️ قیمت و مقادیر عددی باید عدد باشند (مثل 299000).")
+                return
+            ok, res = services.plan_service.create_plan(name, title, "", cfg, admin_id)
             if ok:
-                plan = services.plans_repo.get_by_name(parts[0])
+                plan = services.plans_repo.get_by_name(name)
                 v = services.plans_repo.current_version(plan["id"])
                 services.plans_repo.publish_version(v["id"], "future")
                 services.audit_repo.log(admin_id, "create_plan", "plan", str(plan["id"]))
-                await done(f"✅ پلن «{parts[1]}» ساخته و منتشر شد.")
+                await done(f"✅ پلن «{title}» ساخته و منتشر شد.")
             else:
                 await done(f"⚠️ {res}")
             return
         if flow == "subs:price":
+            from ...utils import normalize_digits
+            try:
+                new_price = int(normalize_digits(text))
+            except ValueError:
+                await done("⚠️ قیمت باید عدد باشد (مثل 299000).")
+                return
             plan = services.plans_repo.get(int(arg))
             v = services.plans_repo.current_version(int(arg))
             cfg = services.plan_service.config_of_version(v)
-            cfg.price = int(text)
+            cfg.price = new_price
             ok, res = services.plan_service.draft_new_version(int(arg), cfg, admin_id,
-                                                              f"تغییر قیمت به {text}")
+                                                              f"تغییر قیمت به {new_price}")
             if ok:
                 await done(
                     f"✅ نسخه جدید (پیش‌نویس) ساخته شد. برای انتشار: /panel → پلن‌ها → کارت پلن.\n"
@@ -891,7 +942,12 @@ async def admin_input(message: Message, state: FSMContext, services: Services):
         if flow == "groups:new":
             parts = [p.strip() for p in text.split("|")]
             if not parts or not parts[0]:
-                await done("⚠️ شکل صحیح: نام_گروه | شناسه‌ها")
+                await done(
+                    "➕ ساخت گروه دستی جدید\n"
+                    "⚠️ شکل صحیح: نام_گروه | شناسه‌ها\n\n"
+                    "📌 نمونه:\n"
+                    "vip_users | 123456,789012"
+                )
                 return
             name = parts[0]
             ids = []
@@ -949,7 +1005,12 @@ async def admin_input(message: Message, state: FSMContext, services: Services):
         if flow == "admins:add":
             parts = text.split()
             if len(parts) != 2:
-                await done("⚠️ شکل صحیح: شناسه_عددی نقش")
+                await done(
+                    "➕ افزودن مدیر\n"
+                    "⚠️ شکل صحیح: شناسه_عددی نقش\n\n"
+                    "📌 نمونه:\n"
+                    "123456789 sales"
+                )
                 return
             uid, role_name = int(parts[0]), parts[1]
             roles = {r["name"]: r["id"] for r in services.admins_repo.roles()}
