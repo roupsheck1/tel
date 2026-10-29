@@ -19,6 +19,7 @@ from ...admin.permissions import (
 )
 from ...services import Services
 from ..keyboards import admin as ak
+from ..keyboards.user import ADMIN_PANEL_BUTTON
 from .panel_utils import (
     AdminInput, ask_input, edit_or_answer, mention, parse_kv, require, ts_fa,
 )
@@ -28,16 +29,40 @@ router = Router(name="admin")
 
 
 # ============================ ورود به پنل ============================
-@router.message(Command("panel"))
-async def cmd_panel(message: Message, services: Services):
+async def _open_panel(message: Message, services: Services) -> None:
+    """ورود به پنل — مجوز سمت سرور (§۲۶: شناسه عددی تلگرام مدیران مجاز)."""
     ctx = services.permissions.context_of(message.from_user.id)
     if not ctx:
-        await message.reply("شما به پنل مدیریت دسترسی ندارید.")
+        # تشخیص راه دور: شناسه ملاک واقعی است؛ اگر مدیر فکر می‌کند ادمین است
+        # ولی این پیام را می‌گیرد، یعنی ADMIN_IDS سرویس با شناسه واقعی‌اش فرق دارد.
+        log.warning(
+            "ورود ناموفق به پنل: tg_id=%s username=%s — این شناسه در جدول مدیران نیست "
+            "(در صورت ادمین بودن، ADMIN_IDS در لوسیتی باید همین عدد باشد)",
+            message.from_user.id, getattr(message.from_user, "username", None),
+        )
+        await message.reply(
+            "⛔ شما به پنل مدیریت دسترسی ندارید.\n"
+            f"🆔 شناسه عددی تلگرام شما: <code>{message.from_user.id}</code>\n"
+            "برای دسترسی مدیر، همین عدد باید در متغیر ADMIN_IDS سرویس تنظیم شود "
+            "(لوسیتی → پروژه tel → سرویس tel → Variables). پس از ذخیره، سرویس "
+            "خودکار دوباره اجرا و شما به‌عنوان مدیر شناخته می‌شوید."
+        )
         return
     await message.reply(
         f"🛛 پنل مدیریت\nنقش شما: {ROLE_LABELS.get(ctx.role_name, ctx.role_name)}",
         reply_markup=ak.MAIN_MENU,
     )
+
+
+@router.message(Command("panel"))
+async def cmd_panel(message: Message, services: Services):
+    await _open_panel(message, services)
+
+
+@router.message(F.text == ADMIN_PANEL_BUTTON)
+async def msg_open_panel(message: Message, services: Services):
+    """دکمه «🛛 پنل مدیریت» در منوی اصلی (فقط برای مدیران نمایش داده می‌شود)."""
+    await _open_panel(message, services)
 
 
 @router.callback_query(F.data == "a:home")

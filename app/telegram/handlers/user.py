@@ -44,9 +44,11 @@ async def cmd_start(message: Message, state: FSMContext, services: Services):
     text = services.settings.get("text.welcome").format(
         name=message.from_user.first_name or "دوست", ig_user=ig_user,
     )
-    from ..keyboards.user import MAIN_KEYBOARD
+    from ..keyboards.user import main_keyboard
+    # مدیران علاوه بر منوی کاربر، دکمه ورود به پنل را هم می‌بینند (§۲۶)
+    is_admin = services.permissions.context_of(message.from_user.id) is not None
     await message.reply(text + ("\n\n👤 حساب شما ثبت شد ✅" if is_new else ""),
-                        reply_markup=MAIN_KEYBOARD)
+                        reply_markup=main_keyboard(is_admin))
 
 
 @router.message(Command("help"))

@@ -4,6 +4,11 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from aiogram.types import KeyboardButton
 
+# دکمه ورود به پنل که فقط برای مدیران به منوی اصلی اضافه می‌شود (§۲۶:
+# دسترسی پنل بر اساس شناسه عددی مدیران؛ دکمه صرفاً نقطه ورود است و
+# مجوز همچنان سمت سرور بررسی می‌شود)
+ADMIN_PANEL_BUTTON = "🛛 پنل مدیریت"
+
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="📊 وضعیت من"), KeyboardButton(text="💎 پلن‌ها و خرید")],
@@ -13,6 +18,22 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
     resize_keyboard=True,
     is_persistent=True,
 )
+
+
+def main_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
+    """صفحه‌کلید اصلی؛ برای مدیران یک ردیف «پنل مدیریت» اضافه می‌شود.
+
+    (کاربر عادی همان منوی همیشگی را می‌بیند؛ مدیر بدون /panel هم راه
+    ورود به پنل را داخل خود منو می‌بیند.)
+    """
+    rows = [
+        [KeyboardButton(text="📊 وضعیت من"), KeyboardButton(text="💎 پلن‌ها و خرید")],
+        [KeyboardButton(text="🔗 اتصال اینستاگرام"), KeyboardButton(text="🧾 سفارش‌های من")],
+        [KeyboardButton(text="🆘 راهنما")],
+    ]
+    if is_admin:
+        rows.append([KeyboardButton(text=ADMIN_PANEL_BUTTON)])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
 
 
 def plans_keyboard(plans: list[dict]) -> InlineKeyboardMarkup:
