@@ -63,8 +63,11 @@ async def codes_plan(cb: CallbackQuery, state: FSMContext, services: Services, c
 
 @router.callback_query(F.data.startswith("a:codes:list:"))
 @require(PERM_CREATE_PROMO)
-async def codes_list(cb: CallbackQuery, services: Services, ctx=None):
-    offset = int(cb.data.split(":")[3] or 0)
+async def codes_list(cb: CallbackQuery, services: Services, ctx=None, offset=None):
+    """فهرست کدها؛ offset از callback یا فراخوانی داخلی (بدون تغییر cb.data —
+    مدل‌های aiogram 3.13+ frozen هستند)."""
+    if offset is None:
+        offset = int(cb.data.split(":")[3] or 0)
     rows = services.codes_repo.list(limit=10, offset=offset)
     if not rows:
         await edit_or_answer(cb, "کدی ثبت نشده است.", ak.menu_of("codes"))
@@ -91,8 +94,8 @@ async def codes_cancel(cb: CallbackQuery, services: Services, ctx=None):
     services.audit_repo.log(ctx.telegram_id, "cancel_promo_code", "code", code,
                             result="success" if ok else "noop")
     await cb.answer("کد لغو شد ✅" if ok else "امکان لغو نیست (استفاده‌شده یا قبلاً لغو شده).")
-    cb.data = "a:codes:list:0"
-    await codes_list(cb, services)
+    # بازگشت به فهرست کدها (بدون تغییر cb.data — مدل frozen است)
+    await codes_list(cb, services, offset=0)
 
 
 # ============================ ۵ب) گروه‌های کاربری (بخش ۷ سند ۲) ============================
@@ -203,7 +206,10 @@ async def broadcast_audience_group(cb: CallbackQuery, state: FSMContext, service
     count = len(services.groups_repo.member_ids(int(gid)))
     await ask_input(
         state, cb,
-        f"📝 متن پیام همگانی برای گروه «{g['name']}» ({count} نفر) را بفرست:",
+        f"📢 پیام همگانی برای گروه «{g['name']}» ({count} نفر)\n"
+        "متن پیام را بفرست (HTML ساده مجاز است):\n\n"
+        "📌 نمونه:\n"
+        "🎉 خبر خوب! دسترسی اعضای ویژه از این هفته با سرعت بیشتر ادامه می‌یابد.",
         "broadcast:group", gid,
     )
 
@@ -728,9 +734,10 @@ async def admin_input(message: Message, state: FSMContext, services: Services):
                 return
             for u in rows:
                 sub = services.subs_repo.active_of(u["telegram_id"])
+                status_fa = "فعال ✅" if u["status"] == "active" else "مسدود 🚫"
                 await message.reply(
                     f"👤 {mention(u['telegram_id'], u['username'])}\n"
-                    f"وضعیت: {u['status']} | "
+                    f"وضعیت: {status_fa} | "
                     f"اشتراک: {'دارد' if sub else 'ندارد'}\n"
                     f"برای مدیریت: /panel → کاربران"
                 )

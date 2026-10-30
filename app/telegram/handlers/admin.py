@@ -320,8 +320,11 @@ async def subs_plans(cb: CallbackQuery, services: Services, ctx=None):
 
 @router.callback_query(F.data.startswith("a:subs:plan:"))
 @require(PERM_VIEW_ORDERS)
-async def subs_plan_card(cb: CallbackQuery, services: Services, ctx=None):
-    plan_id = int(cb.data.split(":")[3])
+async def subs_plan_card(cb: CallbackQuery, services: Services, ctx=None, plan_id=None):
+    """کارت پلن؛ plan_id از callback یا فراخوانی داخلی (بدون تغییر cb.data —
+    مدل‌های aiogram 3.13+ frozen هستند و انتساب cb.data خطای اعتبارسنجی می‌دهد)."""
+    if plan_id is None:
+        plan_id = int(cb.data.split(":")[3])
     plan = services.plans_repo.get(plan_id)
     if not plan:
         await cb.answer("پلن پیدا نشد.")
@@ -336,8 +339,8 @@ async def subs_plan_card(cb: CallbackQuery, services: Services, ctx=None):
         plan["description"] or "",
         "",
         f"نسخه منتشرشده: {v['version']} — قیمت {cfg.price:,} تومان — {cfg.duration_label}",
-        f"هم‌زمان: {cfg.concurrent_downloads} | انتظار: {cfg.wait_seconds}s | صف: {cfg.queue_limit}",
-        f"سقف فایل: {cfg.max_file_mb}MB | اولویت: {cfg.priority}",
+        f"هم‌زمان: {cfg.concurrent_downloads} | انتظار: {cfg.wait_seconds} ثانیه | صف: {cfg.queue_limit}",
+        f"سقف فایل: {cfg.max_file_mb} مگابایت | اولویت: {cfg.priority}",
         f"مشترکان فعال: {services.plans_repo.affected_subscribers(plan_id)}",
     ]
     kbrows = [
@@ -346,8 +349,13 @@ async def subs_plan_card(cb: CallbackQuery, services: Services, ctx=None):
         [("📦 بایگانی پلن", f"a:subs:archive:{plan_id}")],
     ]
     if drafts:
-        lines.append("", "⚠️ نسخه‌های پیش‌نویس (منتشرنشده):")
-        kbrows.insert(0, [(f"انتشار پیش‌نویس v{d['version']}", f"a:subs:publish:{d['id']}") for d in drafts[:2]][0])
+        # نکته: append دوآرگومانی TypeError می‌دهد؛ باید از += استفاده کرد
+        # (این باگ کارت پلن را وقتی نسخه پیش‌نویس دارد می‌کشت).
+        lines += ["", "⚠️ نسخه‌های پیش‌نویس (منتشرنشده):"]
+        # نکته: ردیف دکمه باید «فهرستی از تاپل‌ها» باشد؛ [0] انتهایی ردیف را
+        # به یک تاپل تکی تبدیل می‌کرد و سازنده کیبورد با خطای unpack می‌شکست.
+        kbrows.insert(0, [(f"انتشار پیش‌نویس v{d['version']}", f"a:subs:publish:{d['id']}")
+                          for d in drafts[:2]])
     kbrows.append(ak.BACK_HOME_ROW)
     await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
 
@@ -395,10 +403,10 @@ async def subs_publish2(cb: CallbackQuery, services: Services, ctx=None):
     services.audit_repo.log(ctx.telegram_id, "publish_plan_version", "plan_version", version_id,
                             new_value={"scope": scope}, result="success" if ok else "failed")
     await cb.answer(msg, show_alert=not ok)
-    # بازگشت به کارت پلن
+    # بازگشت به کارت پلن (بدون تغییر cb.data — مدل frozen است؛
+    # دکوراتور require خودش مجوز را دوباره بررسی می‌کند)
     v = services.plans_repo.version(int(version_id))
-    cb.data = f"a:subs:plan:{v['plan_id']}"
-    await subs_plan_card(cb, services)
+    await subs_plan_card(cb, services, plan_id=v["plan_id"])
 
 
 @router.callback_query(F.data.startswith("a:subs:versions:"))
@@ -413,7 +421,7 @@ async def subs_versions(cb: CallbackQuery, services: Services, ctx=None):
         status = {"draft": "پیش‌نویس", "published": "منتشرشده", "archived": "بایگانی"}[v["status"]]
         cfg = services.plan_service.config_of_version(v)
         lines.append(f"v{v['version']} — {status} — {cfg.price:,} تومان — {ts_fa(v['created_at'])}")
-    lines.append("", "سوابق خرید به نسخه لحظه خرید متصل‌اند و تغییرات اثری روی آن‌ها ندارد.")
+    lines += ["", "سوابق خرید به نسخه لحظه خرید متصل‌اند و تغییرات اثری روی آن‌ها ندارد."]
     await edit_or_answer(cb, "\n".join(lines), ak.with_back([]))
 
 
@@ -437,7 +445,7 @@ async def subs_archive2(cb: CallbackQuery, services: Services, ctx=None):
     services.audit_repo.log(ctx.telegram_id, "archive_plan", "plan", str(plan_id),
                             result="success" if ok else "noop")
     await cb.answer("بایگانی شد ✅" if ok else "تغییری نکرد.")
-    cb.data = "a:subs:plans:"
+    # بازگشت مستقیم به فهرست پلن‌ها (بدون تغییر cb.data — مدل frozen است)
     await subs_plans(cb, services)
 
 

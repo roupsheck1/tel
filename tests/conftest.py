@@ -103,3 +103,27 @@ def make_paid_sub(services: Services, user_id: int, plan_name: str = "basic_mont
     plan = services.plans_repo.get_by_name(plan_name)
     version = services.plans_repo.current_version(plan["id"])
     return services.subs_repo.create(user_id, plan["id"], version["id"], 86400 * 30, "gift")
+
+
+# ---------------- دیسپچر مشترک (روترهای singleton) ----------------
+# روترهای هندلرها singleton سطح ماژول‌اند و در هر فرآیند فقط یک‌بار می‌توانند
+# به یک Dispatcher وصل شوند. آزمون‌هایی که دیسپچر واقعی می‌خواهند باید از
+# همین نمونه مشترک استفاده کنند (مثلاً test_button_execution و test_routing).
+_SHARED_DP = None
+
+
+def get_shared_dispatcher(services=None):
+    """ساخت/بازیابی دیسپچر مشترک؛ اگر قبلاً بدون services ساخته شده باشد و
+    الان services واقعی داده شود، میدل‌ور کاربر به‌روز می‌شود."""
+    global _SHARED_DP
+    from app.main import build_dispatcher
+    if _SHARED_DP is None:
+        _SHARED_DP = build_dispatcher(services)
+        return _SHARED_DP
+    if services is not None:
+        from app.telegram.middlewares import UserMiddleware
+        for obs in (_SHARED_DP.message, _SHARED_DP.callback_query):
+            for mw in getattr(obs.middleware, "_middlewares", []):
+                if isinstance(mw, UserMiddleware) and mw.services is None:
+                    mw.services = services
+    return _SHARED_DP

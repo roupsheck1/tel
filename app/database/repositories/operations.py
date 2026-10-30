@@ -173,12 +173,18 @@ class DownloadsRepo:
         ).rowcount > 0
 
     def recent(self, status: str | None = None, user_id: int | None = None, limit: int = 20):
+        """فهرست درخواست‌های اخیر با یوزرنیم کاربر.
+
+        نکته: شرط‌ها باید با پیشوند «d.» صریح باشند؛ جدول users هم ستون status
+        دارد و شرت بدون پیشوند خطای «ambiguous column» می‌دهد (باگ دکمه
+        «خطاها و تلاش مجدد» پنل).
+        """
         cond, args = [], []
         if status:
-            cond.append("status=?")
+            cond.append("d.status=?")
             args.append(status)
         if user_id:
-            cond.append("user_id=?")
+            cond.append("d.user_id=?")
             args.append(user_id)
         where = (" WHERE " + " AND ".join(cond)) if cond else ""
         args.append(limit)

@@ -278,7 +278,9 @@ async def orders_reject(cb: CallbackQuery, state: FSMContext, services: Services
         return
     await ask_input(state, cb,
                     f"❌ دلیل رد سفارش <code>{order_id}</code> را بنویس:\n"
-                    "(این دلیل برای کاربر ارسال می‌شود)",
+                    "(این دلیل برای کاربر ارسال می‌شود)\n\n"
+                    "📌 نمونه:\n"
+                    "مبلغ واریزی با قیمت پلن مطابقت ندارد",
                     "orders:reject", order_id)
 
 

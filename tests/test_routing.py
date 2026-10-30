@@ -21,12 +21,14 @@ def test_free_text_lives_on_fallback_router():
 
 def test_dispatcher_registers_fallback_last():
     """fallback باید بعد از روترهای ادمین ثبت شود تا دستورات ادمین اول ببینیم."""
-    from app.main import build_dispatcher
+    from tests.conftest import get_shared_dispatcher
     from app.telegram.handlers import admin as ah
     from app.telegram.handlers import admin_more as amh
     from app.telegram.handlers import admin_orders as aoh
 
-    dp = build_dispatcher(None)  # services فقط در میدلور ذخیره می‌شود
+    # روترها singleton‌اند؛ از دیسپچر مشترک استفاده می‌کنیم (فقط یک اتصال
+    # در هر فرآیند ممکن است — وگرنه RuntimeError: Router is already attached)
+    dp = get_shared_dispatcher(None)  # services فقط در میدلور ذخیره می‌شود
     routers = list(dp.sub_routers)
     assert len(routers) == 5
     assert routers[0] is uh.router
