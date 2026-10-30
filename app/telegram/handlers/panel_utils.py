@@ -93,8 +93,12 @@ def require(permission: str):
     return decorator
 
 
-async def ask_input(state: FSMContext, cb_or_msg, prompt: str, flow: str, arg: str = "") -> None:
+async def ask_input(state: FSMContext, cb_or_msg, prompt: str, flow: str, arg: str = "",
+                    back: str = "") -> None:
     """درخواست ورودی متنی از مدیر با ذخیره جریان در FSM.
+
+    back (اختیاری): callback منوی قبلی — روی پرامپت دکمه «🔙 برگشت» می‌گذارد
+    که با a:backgo خوانده می‌شود: FSM پاک می‌شود و منوی قبلی دوباره رندر می‌شود.
 
     نکته: cb.answer باید صریح صدا شود تا انیمیشن «در حال بارگذاری» دکمه در
     تلگرام همان لحظه قطع شود؛ بدون آن دکمه تا سقف تایماوت چرخان می‌ماند و
@@ -103,7 +107,10 @@ async def ask_input(state: FSMContext, cb_or_msg, prompt: str, flow: str, arg: s
     from ..keyboards.admin import kb
     await state.set_state(AdminInput.awaiting)
     await state.update_data(flow=flow, arg=arg)
-    markup = kb([[("❌ انصراف", "a:cancel:")]])
+    if back:
+        markup = kb([[("❌ انصراف", "a:cancel:"), ("🔙 برگشت", f"a:backgo:{back}")]])
+    else:
+        markup = kb([[("❌ انصراف", "a:cancel:")]])
     if isinstance(cb_or_msg, CallbackQuery):
         try:
             await cb_or_msg.answer()

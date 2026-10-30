@@ -95,7 +95,9 @@ def order_actions(order) -> InlineKeyboardMarkup:
         rows.append([("🔁 علامت‌گذاری «نیازمند بررسی»", f"a:orders:needsreview:{order['id']}")])
     if order["receipt_file_id"]:
         rows.append([("🖼 مشاهده رسید", f"a:orders:receipt:{order['id']}")])
-    rows.append([("🏠 منوی اصلی", "a:home:")])
+    # برگشت به فهرستِ طبیعی همان وضعیت + میان‌بر منوی اصلی
+    parent = "a:orders:pending:0" if order["status"] in REVIEW_STATUSES else "a:orders:list:all:0"
+    rows += ak.nav_rows(parent)
     return ak.kb(rows)
 
 
@@ -161,7 +163,7 @@ async def orders_pending(cb: CallbackQuery, services: Services, ctx=None):
         return
     lines = [f"🔔 در انتظار بررسی ({total}):", ""] + [_order_line(o) for o in rows]
     pages = ak.pager("a:orders:pending:", offset, total)
-    await edit_or_answer(cb, "\n".join(lines), ak.with_back(pages))
+    await edit_or_answer(cb, "\n".join(lines), ak.with_back(pages, parent="a:orders:menu:"))
 
 
 @router.callback_query(F.data.startswith("a:orders:list:"))
@@ -179,13 +181,15 @@ async def orders_list(cb: CallbackQuery, services: Services, ctx=None):
     label = STATUS_LABELS.get(status, "همه") if status else "همه"
     lines = [f"🧾 سفارش‌ها — {label} ({total}):", ""] + [_order_line(o) for o in rows]
     pages = ak.pager(f"a:orders:list:{parts[3]}:", offset, total)
-    await edit_or_answer(cb, "\n".join(lines), ak.with_back(pages))
+    await edit_or_answer(cb, "\n".join(lines), ak.with_back(pages, parent="a:orders:menu:"))
 
 
 @router.callback_query(F.data.startswith("a:orders:card:"))
 @require(PERM_VIEW_ORDERS)
-async def orders_card(cb: CallbackQuery, services: Services, ctx=None):
-    order_id = cb.data.split(":")[3]
+async def orders_card(cb: CallbackQuery, services: Services, ctx=None, order_id=None):
+    """کارت سفارش؛ order_id از callback یا فراخوانی داخلی (مدل‌های aiogram frozen هستند)."""
+    if order_id is None:
+        order_id = cb.data.split(":")[3]
     order = services.orders_repo.get(order_id)
     if not order:
         await cb.answer("سفارش پیدا نشد.", show_alert=True)
@@ -281,7 +285,7 @@ async def orders_reject(cb: CallbackQuery, state: FSMContext, services: Services
                     "(این دلیل برای کاربر ارسال می‌شود)\n\n"
                     "📌 نمونه:\n"
                     "مبلغ واریزی با قیمت پلن مطابقت ندارد",
-                    "orders:reject", order_id)
+                    "orders:reject", order_id, back=f"a:orders:card:{order_id}")
 
 
 @router.callback_query(F.data.startswith("a:orders:needsreview:"))

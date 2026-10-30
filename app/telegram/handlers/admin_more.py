@@ -39,7 +39,7 @@ async def codes_new(cb: CallbackQuery, state: FSMContext, services: Services, ct
         return
     plans = services.plans_repo.list()
     kbrows = [[(p["title"], f"a:codes:plan:{p['id']}")] for p in plans]
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:codes:menu:")
     await edit_or_answer(cb, "🎟 پلن کد را انتخاب کن:", ak.kb(kbrows))
 
 
@@ -57,7 +57,7 @@ async def codes_plan(cb: CallbackQuery, state: FSMContext, services: Services, c
         "4️⃣ expires_hours: اعتبار کد به ساعت (اختیاری)\n\n"
         "📌 نمونه:\n"
         "days=30, count=5, max_uses=1, expires_hours=48",
-        "codes:new", plan_id,
+        "codes:new", plan_id, back="a:codes:new:",
     )
 
 
@@ -82,7 +82,7 @@ async def codes_list(cb: CallbackQuery, services: Services, ctx=None, offset=Non
         )
         if r["status"] == "active" and r["used_count"] == 0:
             kbrows.append([(f"🗑 لغو {r['code']}", f"a:codes:cancel:{r['code']}")])
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:codes:menu:")
     await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
 
 
@@ -120,7 +120,7 @@ async def groups_list(cb: CallbackQuery, services: Services, ctx=None):
         count = len(services.groups_repo.member_ids(g["id"]))
         lines.append(f"• [{g['id']}] {g['name']} ({kinds.get(g['kind'], g['kind'])}) — {count} نفر")
         kbrows.append([(f"👥 {g['name']} ({count})", f"a:groups:card:{g['id']}")])
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:groups:menu:")
     await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
 
 
@@ -142,7 +142,7 @@ async def groups_card(cb: CallbackQuery, services: Services, ctx=None):
         "برای افزودن/حذف عضو، شناسه عددی کاربر را از کارت کاربر (بخش کاربران) و با دکمه"
         " «افزودن به گروه» وارد کن.",
     ]
-    await edit_or_answer(cb, "\n".join(lines), ak.with_back([]))
+    await edit_or_answer(cb, "\n".join(lines), ak.with_back([], parent="a:groups:list:"))
 
 
 @router.callback_query(F.data == "a:groups:new:")
@@ -157,7 +157,7 @@ async def groups_new(cb: CallbackQuery, state: FSMContext, services: Services, c
         "📌 نمونه:\n"
         "vip_users | 123456,789012\n\n"
         "ℹ️ شناسه‌ها اختیاری‌اند؛ بعداً هم می‌توانی از کارت کاربر عضو اضافه کنی.",
-        "groups:new",
+        "groups:new", back="a:groups:menu:",
     )
 
 
@@ -189,7 +189,7 @@ async def broadcast_new(cb: CallbackQuery, services: Services, ctx=None):
     for g in services.groups_repo.list():
         if g["kind"] == "manual":
             kbrows.append([(f"👥 گروه: {g['name']}", f"a:broadcast:audgroup:{g['id']}")])
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:broadcast:menu:")
     await edit_or_answer(cb, "📢 مخاطبان را انتخاب کن (بخش ۱۷.۱):", ak.kb(kbrows))
 
 
@@ -210,7 +210,7 @@ async def broadcast_audience_group(cb: CallbackQuery, state: FSMContext, service
         "متن پیام را بفرست (HTML ساده مجاز است):\n\n"
         "📌 نمونه:\n"
         "🎉 خبر خوب! دسترسی اعضای ویژه از این هفته با سرعت بیشتر ادامه می‌یابد.",
-        "broadcast:group", gid,
+        "broadcast:group", gid, back="a:broadcast:new:",
     )
 
 
@@ -224,7 +224,7 @@ async def broadcast_audience(cb: CallbackQuery, state: FSMContext, services: Ser
         "متن پیام را بفرست (HTML ساده مجاز است):\n\n"
         "📌 نمونه:\n"
         "🎉 تخفیف ویژه پایان فصل! تا ۳۰٪ تخفیف پلن‌های حرفه‌ای.",
-        "broadcast:text", audience,
+        "broadcast:text", audience, back="a:broadcast:new:",
     )
 
 
@@ -239,7 +239,7 @@ async def broadcast_confirm(cb: CallbackQuery, state: FSMContext, services: Serv
     services.broadcast_repo.start(job_id)
     await state.clear()
     await edit_or_answer(cb, "📢 ارسال آغاز شد... پیشرفت را از «گزارش ارسال‌ها» ببین.",
-                         ak.with_back([]))
+                         ak.with_back([], parent="a:broadcast:menu:"))
     asyncio.create_task(_run_broadcast(cb.message.bot, services, job_id, ctx.telegram_id))
 
 
@@ -293,7 +293,7 @@ async def broadcast_jobs(cb: CallbackQuery, services: Services, ctx=None):
         )
         if r["status"] == "running":
             kbrows.append([(f"⏹ توقف ارسال {r['id']}", f"a:broadcast:stop:{r['id']}")])
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:broadcast:menu:")
     await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
 
 
@@ -331,7 +331,7 @@ async def settings_menu(cb: CallbackQuery, services: Services, ctx=None):
 @require(PERM_TECH_SETTINGS)
 async def settings_texts(cb: CallbackQuery, services: Services, ctx=None):
     kbrows = [[(label, f"a:settings:edittext:{key}")] for key, label in EDITABLE_TEXTS.items()]
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:settings:menu:")
     await edit_or_answer(cb, "📝 کدام پیام ویرایش شود؟", ak.kb(kbrows))
 
 
@@ -342,7 +342,8 @@ async def settings_edittext(cb: CallbackQuery, state: FSMContext, services: Serv
     current = services.settings.get(key)
     await ask_input(state, cb,
                     f"📝 متن جدید برای «{EDITABLE_TEXTS.get(key, key)}» را بفرست.\n"
-                    f"متن فعلی:\n\n{current}", "settings:text", key)
+                    f"متن فعلی:\n\n{current}", "settings:text", key,
+                    back="a:settings:texts:")
 
 
 @router.callback_query(F.data == "a:settings:maint:")
@@ -362,7 +363,7 @@ async def settings_maint(cb: CallbackQuery, services: Services, ctx=None):
     else:
         rows = [("🔧 روشن‌کردن حالت نگهداری", "a:settings:maint:on")]
     kbrows = [[r] for r in rows]  # هر r یک (text, callback)
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:settings:menu:")
     await edit_or_answer(
         cb,
         "🔧 حالت نگهداری (§۵۴ سند ۲):\n"
@@ -434,7 +435,7 @@ async def settings_features(cb: CallbackQuery, services: Services, ctx=None):
         lines.append(f"• {label}: {'روشن ✅' if on else 'خاموش ⏸'}")
         kbrows.append([(f"{'✅' if on else '⏸'} {label}",
                         f"a:settings:feattoggle:{key}:{0 if on else 1}")])
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:settings:menu:")
     await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
 
 
@@ -462,7 +463,7 @@ async def settings_notify(cb: CallbackQuery, services: Services, ctx=None):
         lines.append(f"• {label}: {'روشن ✅' if on else 'خاموش ⏸'}")
         kbrows.append([(f"{'✅' if on else '⏸'} {label}",
                         f"a:settings:notifytoggle:{key}:{0 if on else 1}")])
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:settings:menu:")
     await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
 
 
@@ -487,7 +488,7 @@ async def settings_wait(cb: CallbackQuery, services: Services, ctx=None):
               "send_success": "از پایان موفق ارسال (پیش‌فرض سند)"}
     kbrows = [[(label, f"a:settings:waitset:{key}")]
               for key, label in labels.items()]
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:settings:menu:")
     await edit_or_answer(
         cb, f"⏱ نقطه شروع زمان انتظار (بخش ۱۵.۵):\nفعلی: {labels.get(point, point)}",
         ak.kb(kbrows))
@@ -519,7 +520,7 @@ async def settings_free(cb: CallbackQuery, state: FSMContext, services: Services
         "📌 نمونه:\n"
         f"concurrent={cfg['concurrent_downloads']}, wait={cfg['wait_seconds']}, "
         f"queue={cfg['queue_limit']}, hourly={cfg['hourly_quota']}, daily={cfg['daily_quota']}",
-        "settings:free",
+        "settings:free", back="a:settings:menu:",
     )
 
 
@@ -561,7 +562,7 @@ async def errors_list(cb: CallbackQuery, services: Services, ctx=None):
     for e in rows:
         msg = (e["message"] or "")[:100].replace("\n", " ")
         lines.append(f"• [{e['category']}] {ts_fa(e['created_at'])} — {msg}")
-    await edit_or_answer(cb, "\n".join(lines), ak.with_back([]))
+    await edit_or_answer(cb, "\n".join(lines), ak.with_back([], parent="a:errors:menu:"))
 
 
 # ============================ ۹) مدیریت مدیران (بخش ۱۹) ============================
@@ -581,7 +582,7 @@ async def admins_list(cb: CallbackQuery, services: Services, ctx=None):
         role = ROLE_LABELS.get(a["role_name"], a["role_name"])
         lines.append(f"• {mention(a['telegram_id'], a['username'])} — {role}")
         kbrows.append([(f"🗑 حذف {a['telegram_id']}", f"a:admins:remove:{a['telegram_id']}")])
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:admins:menu:")
     await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
 
 
@@ -611,7 +612,7 @@ async def admins_add(cb: CallbackQuery, state: FSMContext, services: Services, c
         "📌 نمونه:\n"
         "123456789 sales\n\n"
         f"نقش‌های موجود: {role_list}",
-        "admins:add",
+        "admins:add", back="a:admins:menu:",
     )
 
 
@@ -627,7 +628,7 @@ async def admins_roles(cb: CallbackQuery, services: Services, ctx=None):
         else:
             labels = [PERM_LABELS.get(p, p) for p in perms]
             lines.append(f"• {r['name']}: {', '.join(labels) or 'بدون مجوز'}")
-    await edit_or_answer(cb, "\n".join(lines), ak.with_back([]))
+    await edit_or_answer(cb, "\n".join(lines), ak.with_back([], parent="a:admins:menu:"))
 
 
 # ============================ ۱۰) مرکز سلامت (بخش ۲۰.۱) ============================
@@ -825,8 +826,15 @@ async def admin_input(message: Message, state: FSMContext, services: Services):
             return
         if flow == "subs:sched":
             import datetime as _dt
-            when = int(_dt.datetime.strptime(text, "%Y-%m-%d %H:%M")
-                       .replace(tzinfo=_dt.timezone.utc).timestamp())
+            try:
+                when = int(_dt.datetime.strptime(text, "%Y-%m-%d %H:%M")
+                           .replace(tzinfo=_dt.timezone.utc).timestamp())
+            except ValueError:
+                await done(
+                    "⚠️ قالب زمان درست نیست.\n"
+                    "📌 نمونه صحیح: 2026-01-15 18:30"
+                )
+                return
             services.settings.start_sales(when)
             services.audit_repo.log(admin_id, "schedule_sales", "settings", str(when))
             await done(f"⏰ فروش در {text} (UTC) آغاز می‌شود. یادآوری برای مدیران ارسال می‌شود.")
@@ -1005,7 +1013,7 @@ async def admin_input(message: Message, state: FSMContext, services: Services):
                 kbrows.append([("↩️ پس‌گرفتن سهمیه این درخواست",
                                 f"a:downloads:refund:{r['id']}")])
             from ..keyboards import admin as ak2
-            kbrows.append(ak2.BACK_HOME_ROW)
+            kbrows += ak2.nav_rows("a:downloads:queue:")
             await message.reply("\n".join(lines), reply_markup=ak2.kb(kbrows))
             return
         # ---- مدیران ----

@@ -32,9 +32,17 @@ BACK_HOME_ROW = [("🏠 منوی اصلی", "a:home:")]
 BACK_HOME = kb([BACK_HOME_ROW])
 
 
-def with_back(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
-    """افزودن دکمه بازگشت به منوی اصلی."""
-    return kb([*rows, BACK_HOME_ROW])
+def nav_rows(parent: str = "a:home:") -> list[list[tuple[str, str]]]:
+    """ردیف‌های پایین هر صفحهٔ پنل:
+    1️⃣ «🔙 برگشت» → منوی قبلی (parent)
+    2️⃣ «🏠 منوی اصلی» → ریشهٔ پنل (میان‌بر)
+    """
+    return [[("🔙 برگشت", parent)], list(BACK_HOME_ROW)]
+
+
+def with_back(rows: list[list[tuple[str, str]]], parent: str = "a:home:") -> InlineKeyboardMarkup:
+    """دکمه‌های صفحه + «برگشت به منوی قبلی» (parent) + میان‌بر «منوی اصلی»."""
+    return kb([*rows, *nav_rows(parent)])
 
 
 # ---------- منوهای اختصاصی هر بخش ----------

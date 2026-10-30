@@ -29,8 +29,11 @@ router = Router(name="admin")
 
 
 # ============================ ورود به پنل ============================
-async def _open_panel(message: Message, services: Services) -> None:
+async def _open_panel(message: Message, services: Services, state: FSMContext | None = None) -> None:
     """ورود به پنل — مجوز سمت سرور (§۲۶: شناسه عددی تلگرام مدیران مجاز)."""
+    # پاک‌سازی جریان ورودی نیمه‌کاره (FSM) هنگام ورود دوباره به پنل
+    if state is not None:
+        await state.clear()
     ctx = services.permissions.context_of(message.from_user.id)
     if not ctx:
         # تشخیص راه دور: شناسه ملاک واقعی است؛ اگر مدیر فکر می‌کند ادمین است
@@ -55,14 +58,14 @@ async def _open_panel(message: Message, services: Services) -> None:
 
 
 @router.message(Command("panel"))
-async def cmd_panel(message: Message, services: Services):
-    await _open_panel(message, services)
+async def cmd_panel(message: Message, state: FSMContext, services: Services):
+    await _open_panel(message, services, state)
 
 
 @router.message(F.text == ADMIN_PANEL_BUTTON)
-async def msg_open_panel(message: Message, services: Services):
+async def msg_open_panel(message: Message, state: FSMContext, services: Services):
     """دکمه «🛛 پنل مدیریت» در منوی اصلی (فقط برای مدیران نمایش داده می‌شود)."""
-    await _open_panel(message, services)
+    await _open_panel(message, services, state)
 
 
 # نکته: دکمه‌های منو «a:home:» می‌فرستند (قالب عمومی callback های پنل)؛
@@ -89,6 +92,30 @@ async def cb_back(cb: CallbackQuery, services: Services):
     await edit_or_answer(cb, "بازگشت.", ak.MAIN_MENU)
 
 
+@router.callback_query(F.data.startswith("a:backgo:"))
+async def cb_backgo(cb: CallbackQuery, state: FSMContext, services: Services):
+    """«🔙 برگشت» روی پرامپت‌های ورودی: FSM پاک می‌شود و منوی قبلی دوباره رندر می‌شود."""
+    target = cb.data.split(":", 2)[2]
+    await state.clear()
+    try:
+        await cb.answer()
+    except Exception:
+        pass
+    fn = None
+    for prefix in BACK_GLUE:
+        if target.startswith(prefix):
+            fn = BACK_GLUE[prefix]
+            break
+    if fn is None:
+        await edit_or_answer(cb, "🛛 پنل مدیریت — بخش موردنظر را انتخاب کن:", ak.MAIN_MENU)
+        return
+    try:
+        await fn(cb, state, services, target)
+    except Exception:
+        log.exception("backgo: رندر منوی قبلی ناموفق (%s)", target)
+        await edit_or_answer(cb, "🛛 پنل مدیریت — بخش موردنظر را انتخاب کن:", ak.MAIN_MENU)
+
+
 # ============================ ۱) مدیریت کاربران ============================
 @router.callback_query(F.data == "a:users:menu:")
 @require(PERM_VIEW_USERS)
@@ -105,14 +132,16 @@ async def users_search(cb: CallbackQuery, state: FSMContext, services: Services,
         "شناسه عددی تلگرام یا یوزرنیم کاربر را بفرست:\n\n"
         "📌 نمونه:\n"
         "123456789 یا @user_name",
-        "users:search",
+        "users:search", back="a:users:menu:",
     )
 
 
 @router.callback_query(F.data.startswith("a:users:list:"))
 @require(PERM_VIEW_USERS)
-async def users_list(cb: CallbackQuery, services: Services, ctx=None):
-    offset = int(cb.data.split(":")[3] or 0)
+async def users_list(cb: CallbackQuery, services: Services, ctx=None, offset=None):
+    """فهرست کاربران؛ offset از callback یا فراخوانی داخلی (مدل‌های aiogram frozen هستند)."""
+    if offset is None:
+        offset = int(cb.data.split(":")[3] or 0)
     rows = services.users_repo.search(limit=10, offset=offset)
     total = services.users_repo.count()
     if not rows:
@@ -127,7 +156,7 @@ async def users_list(cb: CallbackQuery, services: Services, ctx=None):
         )
         kbrows.append([(f"{u['telegram_id']}", f"a:users:card:{u['telegram_id']}")])
     kbrows += ak.pager("a:users:list:", offset, total)
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:users:menu:")
     await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
 
 
@@ -143,14 +172,16 @@ async def users_blocked(cb: CallbackQuery, services: Services, ctx=None):
     for u in rows:
         lines.append(f"• {mention(u['telegram_id'], u['username'])} — {u['blocked_reason'] or '-'}")
         kbrows.append([(str(u["telegram_id"]), f"a:users:card:{u['telegram_id']}")])
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:users:menu:")
     await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
 
 
 @router.callback_query(F.data.startswith("a:users:card:"))
 @require(PERM_VIEW_USERS)
-async def users_card(cb: CallbackQuery, services: Services, ctx=None):
-    uid = int(cb.data.split(":")[3])
+async def users_card(cb: CallbackQuery, services: Services, ctx=None, uid=None):
+    """کارت کاربر؛ uid از callback یا فراخوانی داخلی (مدل‌های aiogram frozen هستند)."""
+    if uid is None:
+        uid = int(cb.data.split(":")[3])
     u = services.users_repo.get(uid)
     if not u:
         await cb.answer("کاربر پیدا نشد.")
@@ -178,7 +209,7 @@ async def users_card(cb: CallbackQuery, services: Services, ctx=None):
         [("👥 افزودن به گروه", f"a:users:addtogroup:{uid}")],
         [("🔗 قطع اتصال اینستاگرام", f"a:users:unlink:{uid}")],
     ]
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:users:list:0")
     await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
 
 
@@ -207,8 +238,12 @@ async def users_unblock(cb: CallbackQuery, services: Services, ctx=None):
 async def users_gift(cb: CallbackQuery, services: Services, ctx=None):
     uid = int(cb.data.split(":")[3])
     plans = services.plans_repo.list()
+    if not plans:
+        await cb.answer("هنوز پلنی برای هدیه ساخته نشده است.")
+        await users_card(cb, services, uid=uid)
+        return
     kbrows = [[(p["title"], f"a:users:gift2:{uid}:{p['id']}")] for p in plans]
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows(f"a:users:card:{uid}")
     await edit_or_answer(cb, "🎁 پلن هدیه را انتخاب کن:", ak.kb(kbrows))
 
 
@@ -233,7 +268,7 @@ async def users_extend(cb: CallbackQuery, state: FSMContext, services: Services,
         "تعداد روز تمدید را به عدد بفرست:\n\n"
         "📌 نمونه:\n"
         "7",
-        "users:extend", uid,
+        "users:extend", uid, back=f"a:users:card:{uid}",
     )
 
 
@@ -253,7 +288,7 @@ async def users_exception(cb: CallbackQuery, state: FSMContext, services: Servic
         "6️⃣ days: مدت اعتبار استثنا به روز\n\n"
         "📌 نمونه:\n"
         "concurrent=3, wait=0, hourly=20, daily=100, priority=2, days=7",
-        "users:exception", uid,
+        "users:exception", uid, back=f"a:users:card:{uid}",
     )
 
 
@@ -274,8 +309,12 @@ async def users_addtogroup(cb: CallbackQuery, state: FSMContext, services: Servi
     """افزودن کاربر به گروه دستی (§۹ سند ۲: «افزودن به گروه‌های دستی»)."""
     uid = cb.data.split(":")[3]
     groups = services.groups_repo.list()
+    if not groups:
+        await cb.answer("هنوز گروهی ساخته نشده است.")
+        await users_card(cb, services, uid=int(uid))
+        return
     kbrows = [[(g["name"], f"a:users:addgroup2:{uid}:{g['id']}")] for g in groups]
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows(f"a:users:card:{uid}")
     await edit_or_answer(cb, f"👥 کاربر <code>{uid}</code> به کدام گروه اضافه شود؟",
                         ak.kb(kbrows))
 
@@ -314,7 +353,7 @@ async def subs_plans(cb: CallbackQuery, services: Services, ctx=None):
         price = f"{cfg.price:,} تومان" if cfg else "-"
         lines.append(f"• {p['title']} — {price} (نسخه {v['version'] if v else '-'}){archived}")
         kbrows.append([(p["title"], f"a:subs:plan:{p['id']}")])
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:subs:menu:")
     await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
 
 
@@ -356,7 +395,7 @@ async def subs_plan_card(cb: CallbackQuery, services: Services, ctx=None, plan_i
         # به یک تاپل تکی تبدیل می‌کرد و سازنده کیبورد با خطای unpack می‌شکست.
         kbrows.insert(0, [(f"انتشار پیش‌نویس v{d['version']}", f"a:subs:publish:{d['id']}")
                           for d in drafts[:2]])
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:subs:plans:")
     await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
 
 
@@ -370,7 +409,7 @@ async def subs_price(cb: CallbackQuery, state: FSMContext, services: Services, c
         "قیمت جدید را به تومان بفرست:\n\n"
         "📌 نمونه:\n"
         "299000",
-        "subs:price", plan_id,
+        "subs:price", plan_id, back=f"a:subs:plan:{plan_id}",
     )
 
 
@@ -390,7 +429,7 @@ async def subs_publish(cb: CallbackQuery, services: Services, ctx=None):
             [("🛒 فقط خریداران آینده", f"a:subs:pub2:{version_id}:future")],
             [("👥 فقط مشترکان فعلی", f"a:subs:pub2:{version_id}:current")],
             [("🔄 هر دو گروه", f"a:subs:pub2:{version_id}:both")],
-            ak.BACK_HOME_ROW,
+            *ak.nav_rows(f"a:subs:plan:{v['plan_id']}"),
         ]),
     )
 
@@ -422,7 +461,7 @@ async def subs_versions(cb: CallbackQuery, services: Services, ctx=None):
         cfg = services.plan_service.config_of_version(v)
         lines.append(f"v{v['version']} — {status} — {cfg.price:,} تومان — {ts_fa(v['created_at'])}")
     lines += ["", "سوابق خرید به نسخه لحظه خرید متصل‌اند و تغییرات اثری روی آن‌ها ندارد."]
-    await edit_or_answer(cb, "\n".join(lines), ak.with_back([]))
+    await edit_or_answer(cb, "\n".join(lines), ak.with_back([], parent=f"a:subs:plan:{plan_id}"))
 
 
 @router.callback_query(F.data.startswith("a:subs:archive:"))
@@ -471,7 +510,7 @@ async def subs_newplan(cb: CallbackQuery, state: FSMContext, services: Services,
         "هم‌زمان: 2\n"
         "انتظار_ثانیه: 10\n"
         "ظرفیت_صف: 15",
-        "subs:newplan",
+        "subs:newplan", back="a:subs:menu:",
     )
 
 
@@ -492,7 +531,7 @@ async def subs_salesmode(cb: CallbackQuery, services: Services, ctx=None):
         [("🎁 حالت رایگان", "a:subs:mode:free")],
         [("💰 شروع فروش فوری", "a:subs:mode:paid")],
         [("⏰ شروع زمان‌بندی‌شده", "a:subs:sched:")],
-        ak.BACK_HOME_ROW,
+        *ak.nav_rows("a:subs:menu:"),
     ]))
 
 
@@ -519,7 +558,7 @@ async def subs_sched(cb: CallbackQuery, state: FSMContext, services: Services, c
         "زمان شروع را به فرمت زیر بفرست (به وقت UTC):\n\n"
         "📌 نمونه:\n"
         "2026-01-15 18:30",
-        "subs:sched",
+        "subs:sched", back="a:subs:salesmode:",
     )
 
 
@@ -534,7 +573,7 @@ async def subs_paymethods(cb: CallbackQuery, services: Services, ctx=None):
         lines.append(f"• [{m['id']}] {m['title']} — {m['card_number']} ({status})")
         kbrows.append([(f"{'✅' if m['is_active'] else '⭕️'} {m['title']}",
                         f"a:subs:paytoggle:{m['id']}")])
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:subs:menu:")
     await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
 
 
@@ -578,7 +617,7 @@ async def stats_dash(cb: CallbackQuery, services: Services, ctx=None):
         f"⏱ میانگین زمان بررسی سفارش: "
         + (f"{o['avg_review_seconds'] // 60} دقیقه" if o['avg_review_seconds'] else "-"),
     ]
-    await edit_or_answer(cb, "\n".join(lines), ak.with_back([]))
+    await edit_or_answer(cb, "\n".join(lines), ak.with_back([], parent="a:stats:menu:"))
 
 
 @router.callback_query(F.data == "a:stats:ledger:")
@@ -598,18 +637,18 @@ async def stats_ledger(cb: CallbackQuery, services: Services, ctx=None):
         f"📅 ۷ روز اخیر: {week['cnt']} سفارش / {week['total']:,} تومان",
         f"📅 ۳۰ روز اخیر: {month['cnt']} سفارش / {month['total']:,} تومان",
     ]
-    await edit_or_answer(cb, "\n".join(lines), ak.with_back([]))
+    await edit_or_answer(cb, "\n".join(lines), ak.with_back([], parent="a:stats:menu:"))
 
 
 @router.callback_query(F.data == "a:stats:users:")
 @require(PERM_REPORTS)
 async def stats_users(cb: CallbackQuery, services: Services, ctx=None):
     groups = services.groups_repo.list()
-    lines = ["👥 آمار گروه‌های کاربری:", ""]
+    lines = ["👥 آمار کاربران (بر اساس گروه):", ""]
     for g in groups:
         lines.append(f"• {g['name']}: {len(services.groups_repo.member_ids(g['id']))} نفر")
     lines.append(f"کل کاربران: {services.users_repo.count()}")
-    await edit_or_answer(cb, "\n".join(lines), ak.with_back([]))
+    await edit_or_answer(cb, "\n".join(lines), ak.with_back([], parent="a:stats:menu:"))
 
 
 # ============================ ۴) دانلودها و صف ============================
@@ -645,7 +684,7 @@ async def downloads_queue(cb: CallbackQuery, services: Services, ctx=None):
         "🔎 برای پیگیری یک درخواست، شناسه پیگیری (مثل #۱۲) را جست‌وجو کن.",
     ]
     kbrows.append([("🔎 جستجوی شناسه پیگیری", "a:downloads:track:")])
-    await edit_or_answer(cb, "\n".join(lines), ak.with_back(kbrows))
+    await edit_or_answer(cb, "\n".join(lines), ak.with_back(kbrows, parent="a:downloads:menu:"))
 
 
 @router.callback_query(F.data.startswith("a:downloads:prio:"))
@@ -671,7 +710,7 @@ async def downloads_track_prompt(cb: CallbackQuery, state: FSMContext, services:
         "📌 نمونه:\n"
         "12\n\n"
         "ℹ️ کاربر این شناسه را از ربات گرفته و به پشتیبانی می‌دهد (§۵۶).",
-        "downloads:track",
+        "downloads:track", back="a:downloads:queue:",
     )
 
 
@@ -688,7 +727,7 @@ async def downloads_failed(cb: CallbackQuery, services: Services, ctx=None):
         err = (r["last_error"] or "")[:60]
         lines.append(f"#{r['id']} {r['shortcode']} — {err}")
         kbrows.append([(f"🔁 تلاش #{r['id']}", f"a:downloads:retry:{r['id']}")])
-    kbrows.append(ak.BACK_HOME_ROW)
+    kbrows += ak.nav_rows("a:downloads:menu:")
     await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
 
 
@@ -721,7 +760,8 @@ async def downloads_capacity(cb: CallbackQuery, services: Services, ctx=None):
         "📌 نمونه:",
         "dl=3, send=5, queue=100",
     ]
-    await edit_or_answer(cb, "\n".join(lines), ak.with_back([[("✏️ ویرایش", "a:downloads:capedit:")]]))
+    await edit_or_answer(cb, "\n".join(lines), ak.with_back([[("✏️ ویرایش", "a:downloads:capedit:")]],
+                                      parent="a:downloads:menu:"))
 
 
 @router.callback_query(F.data == "a:downloads:capedit:")
@@ -733,5 +773,49 @@ async def downloads_capedit(cb: CallbackQuery, state: FSMContext, services: Serv
         "مقادیر جدید را به شکل «کلید=مقدار» بفرست:\n\n"
         "📌 نمونه:\n"
         "dl=3, send=5, queue=100",
-        "downloads:capacity",
+        "downloads:capacity", back="a:downloads:capacity:",
     )
+
+# ============================ «برگشت» از پرامپت به منوی قبلی ============================
+# نگاشت callback منوی قبلی → رندرکنندهٔ همان منو (برای a:backgo:<target>).
+# فراخوانی با کلیدواژه انجام می‌شود تا دکوراتور require پارامترها را درست بچیند.
+from . import admin_more as _am
+from . import admin_orders as _ao
+
+BACK_GLUE: dict = {}
+
+
+def _glue(targets: list[str], fn) -> None:
+    for t in targets:
+        BACK_GLUE[t] = fn
+
+
+_glue(["a:users:menu:"], lambda cb, state, sv, tg: users_menu(cb, services=sv))
+_glue(["a:users:list:"],
+      lambda cb, state, sv, tg: users_list(cb, services=sv, offset=int(tg.rsplit(":", 1)[1] or 0)))
+_glue(["a:users:card:"],
+      lambda cb, state, sv, tg: users_card(cb, services=sv, uid=int(tg.rsplit(":", 1)[1])))
+_glue(["a:subs:menu:"], lambda cb, state, sv, tg: subs_menu(cb, services=sv))
+_glue(["a:subs:plans:"], lambda cb, state, sv, tg: subs_plans(cb, services=sv))
+_glue(["a:subs:plan:"],
+      lambda cb, state, sv, tg: subs_plan_card(cb, services=sv, plan_id=int(tg.rsplit(":", 1)[1])))
+_glue(["a:subs:salesmode:"], lambda cb, state, sv, tg: subs_salesmode(cb, services=sv))
+_glue(["a:stats:menu:"], lambda cb, state, sv, tg: stats_menu(cb, services=sv))
+_glue(["a:downloads:menu:"], lambda cb, state, sv, tg: downloads_menu(cb, services=sv))
+_glue(["a:downloads:queue:"], lambda cb, state, sv, tg: downloads_queue(cb, services=sv))
+_glue(["a:downloads:capacity:"], lambda cb, state, sv, tg: downloads_capacity(cb, services=sv))
+_glue(["a:orders:menu:"], lambda cb, state, sv, tg: _ao.orders_menu(cb, services=sv))
+_glue(["a:orders:pending:"], lambda cb, state, sv, tg: _ao.orders_pending(cb, services=sv))
+_glue(["a:orders:card:"],
+      lambda cb, state, sv, tg: _ao.orders_card(cb, services=sv, order_id=tg.rsplit(":", 1)[1]))
+_glue(["a:codes:menu:"], lambda cb, state, sv, tg: _am.codes_menu(cb, services=sv))
+_glue(["a:codes:new:"], lambda cb, state, sv, tg: _am.codes_new(cb, state=state, services=sv))
+_glue(["a:groups:menu:"], lambda cb, state, sv, tg: _am.groups_menu(cb, services=sv))
+_glue(["a:groups:list:"], lambda cb, state, sv, tg: _am.groups_list(cb, services=sv))
+_glue(["a:broadcast:menu:"], lambda cb, state, sv, tg: _am.broadcast_menu(cb, services=sv))
+_glue(["a:broadcast:new:"], lambda cb, state, sv, tg: _am.broadcast_new(cb, services=sv))
+_glue(["a:settings:menu:"], lambda cb, state, sv, tg: _am.settings_menu(cb, services=sv))
+_glue(["a:settings:texts:"], lambda cb, state, sv, tg: _am.settings_texts(cb, services=sv))
+_glue(["a:errors:menu:"], lambda cb, state, sv, tg: _am.errors_menu(cb, services=sv))
+_glue(["a:admins:menu:"], lambda cb, state, sv, tg: _am.admins_menu(cb, services=sv))
+

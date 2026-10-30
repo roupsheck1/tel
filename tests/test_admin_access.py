@@ -59,7 +59,7 @@ def test_panel_button_handler_on_admin_router_not_fallback():
 
 async def test_panel_opens_for_owner(services):  # noqa: ARG001
     msg = FakeMessage(111)  # OWNER در conftest مدیر اصلی است
-    await ah.cmd_panel(msg, services)
+    await ah.cmd_panel(msg, None, services)
     assert len(msg.replies) == 1
     text, markup = msg.replies[0]
     assert "پنل مدیریت" in text
@@ -69,7 +69,7 @@ async def test_panel_opens_for_owner(services):  # noqa: ARG001
 
 async def test_panel_denial_shows_numeric_id(services):  # noqa: ARG001
     msg = FakeMessage(99999, username="somebody")
-    await ah.cmd_panel(msg, services)
+    await ah.cmd_panel(msg, None, services)
     text, _ = msg.replies[0]
     # شناسه عددی واقعی کاربر باید در پیام باشد تا ADMIN_IDS قابل تنظیم شود
     assert "99999" in text
@@ -78,7 +78,7 @@ async def test_panel_denial_shows_numeric_id(services):  # noqa: ARG001
 
 async def test_panel_button_opens_panel_for_admin(services):  # noqa: ARG001
     msg = FakeMessage(111)
-    await ah.msg_open_panel(msg, services)
+    await ah.msg_open_panel(msg, None, services)
     text, markup = msg.replies[0]
     assert "پنل مدیریت" in text
     assert markup is not None
@@ -86,7 +86,7 @@ async def test_panel_button_opens_panel_for_admin(services):  # noqa: ARG001
 
 async def test_panel_button_denied_for_normal_user(services):  # noqa: ARG001
     msg = FakeMessage(1001)
-    await ah.msg_open_panel(msg, services)
+    await ah.msg_open_panel(msg, None, services)
     text, _ = msg.replies[0]
     assert "1001" in text
     assert "دسترسی ندارید" in text
