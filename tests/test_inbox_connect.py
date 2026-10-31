@@ -328,3 +328,44 @@ def test_connect_button_text_triggers_arm(tmp_path):
     assert armed, "با دکمه هم پول سریع فعال شود"
     assert sent and "کد ۶ رقمی" in sent[0]
     db2.close()
+
+
+def test_first_scan_handles_datetime_timestamps(rig):
+    """رگرسیون زنده: instagrapi پیام را با timestamp از نوع datetime می‌دهد؛
+    مقایسهٔ «datetime >= int» قبلاً کرش می‌کرد و پیام صندوق مخفی را می‌بلعید."""
+    from datetime import datetime as DT, timedelta
+    t = FakeThread(id="7011", messages=[], users=[FakeUser(pk="808", username="dt_user")])
+    m_new = FakeMessage(id="m20", user_id="808", text="سلام")
+    m_new.timestamp = DT.now() - timedelta(minutes=5)      # datetime، نه عدد!
+    m_old = FakeMessage(id="m21", user_id="808", text="قدیمی")
+    m_old.timestamp = DT.now() - timedelta(days=2)
+    t.messages = [m_new, m_old]
+    rig.client.spam.append(t)
+    assert rig.inbox.first_scan_done is False
+    processed = rig.inbox.scan_once()
+    # پیام تازه پردازش می‌شود؛ کرش datetime نباید رخ دهد
+    assert processed == 1
+    assert "کد اتصال شما" in rig.client.sent[0][0]
+    row = rig.db.query_one("SELECT 1 FROM link_codes WHERE ig_username='dt_user'")
+    assert row is not None
+
+
+def test_reprocess_stuck_frees_marked_threads(rig):
+    """reprocess_stuck: نشانگر ترد‌های pending/spam پاک می‌شود تا دوباره
+    پردازش شوند (بازیابی پیام‌های بلعیده‌شده)."""
+    t = FakeThread(id="7012", messages=[_user_msg("m22", "909")],
+                   users=[FakeUser(pk="909", username="stuck_user")])
+    rig.client.spam.append(t)
+    rig.inbox.first_scan_done = True
+    # شبیه‌سازی: پیام قبلاً خط‌گذاری شده ولی پردازش نشده (کرش قدیمی)
+    rig.inbox._mark_seen("7012", "m22")
+    assert rig.db.query_one("SELECT * FROM ig_seen WHERE thread_id='7012'") is not None
+
+    result = rig.inbox.reprocess_stuck()
+    assert "۱" in result or "1" in result
+    assert rig.db.query_one("SELECT * FROM ig_seen WHERE thread_id='7012'") is None
+    # اسکن بعدی پیام را دوباره پردازش می‌کند → کد ارسال می‌شود
+    rig.inbox.scan_once()
+    assert any("کد اتصال شما" in s[0] for s in rig.client.sent)
+    row = rig.db.query_one("SELECT 1 FROM link_codes WHERE ig_username='stuck_user'")
+    assert row is not None

@@ -74,20 +74,34 @@ async def cmd_igdebug(message: Message, services: Services):
 
     عیب‌یابی «کد اتصال نمی‌رسد»: نشان می‌دهد پیام کاربر کدام صندوق
     (عادی/درخواست‌ها/مخفی) افتاده و پردازش شده یا نه.
+
+    /igdebug reprocess → بازیابی گفتگوهای خط‌گذاری‌شدهٔ پردازش‌نشده
+    (نشانگر «دیده‌شده» پاک می‌شود تا اسکن بعدی دوباره بررسی کند).
     """
     import asyncio
 
     ctx = services.permissions.context_of(message.from_user.id)
     if not ctx:
         return  # برای غیرمدیرها هیچ پاسخی نمی‌دهیم
-    diag = getattr(services, "ig_debug", None)
-    if not callable(diag):
-        await message.reply("ابزار دیاگ اینستاگرام آماده نیست (سرویس را ری‌استارت کن).")
-        return
-    note = await message.reply("🔍 در حال بررسی صندوق‌های اینستاگرام… چند ثانیه صبر کن.")
+    arg = (message.text or "").split(maxsplit=1)
+    reprocess = len(arg) > 1 and arg[1].strip().lower() == "reprocess"
+    fn = None
+    if reprocess:
+        fn = getattr(services, "ig_reprocess", None)
+        if not callable(fn):
+            await message.reply("قابلیت بازیابی آماده نیست (سرویس را ری‌استارت کن).")
+            return
+    else:
+        fn = getattr(services, "ig_debug", None)
+        if not callable(fn):
+            await message.reply("ابزار دیاگ اینستاگرام آماده نیست (سرویس را ری‌استارت کن).")
+            return
+    note = await message.reply(
+        "♻️ در حال بازیابی گفتگوهای دایرکت…" if reprocess
+        else "🔍 در حال بررسی صندوق‌های اینستاگرام… چند ثانیه صبر کن.")
     try:
         # instagrapi همگام است؛ در نخ جداگانه تا حلقهٔ تلگرام بلاک نشود
-        report = await asyncio.to_thread(diag)
+        report = await asyncio.to_thread(fn)
     except Exception as e:
         await note.edit_text(f"❌ خطای دیاگ اینستاگرام: {e}")
         return

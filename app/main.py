@@ -112,6 +112,8 @@ async def run() -> None:
     services.ig_fastpoll = inbox.arm_fast_poll  # type: ignore[attr-defined]
     # گزارش دیاگنوستیک برای مدیران (/igdebug)
     services.ig_debug = inbox.debug_report  # type: ignore[attr-defined]
+    # بازیابی گفتگوهای خط‌گذاری‌شدهٔ پردازش‌نشده (/igdebug reprocess)
+    services.ig_reprocess = inbox.reprocess_stuck  # type: ignore[attr-defined]
 
     dp = build_dispatcher(services)
 

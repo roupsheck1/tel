@@ -13,6 +13,7 @@ import random
 import re
 import threading
 import time
+from datetime import datetime
 
 from ..database.repositories import LinksRepo
 from ..services.download_engine import DownloadEngine
@@ -122,6 +123,21 @@ def _story_of_share(d: dict):
     url_id = story_mid or (parts[1] if len(parts) == 2 else parts[0])
     url = f"https://www.instagram.com/stories/{owner}/{url_id}/"
     return url, media_id, "story"
+
+
+def _msg_ts(m) -> float:
+    """زمان پیام به ثانیهٔ epoch — instagrapi گاهی datetime می‌دهد (نه عدد).
+
+    بدون این نرمال‌سازی، مقایسهٔ «datetime >= int» استثنا می‌دهد و پردازش
+    ترد نیمه‌کاره می‌ماند (باگ راند پنجم).
+    """
+    ts = getattr(m, "timestamp", 0) or 0
+    if isinstance(ts, datetime):
+        return ts.timestamp()
+    try:
+        return float(ts)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _dump_message(m) -> str:
@@ -434,9 +450,8 @@ class InstagramInbox:
         if first_scan:
             # در نخستین اسکن فقط پیام‌های تازه پردازش می‌شوند؛ پیام‌های
             # قدیمی فقط خط‌گذاری می‌شوند (بازیابی بدون بازپخش تاریخ قدیمی).
-            cutoff = int(time.time()) - self.BASELINE_MAX_AGE
-            fresh = [m for m in new_msgs
-                     if (getattr(m, "timestamp", 0) or 0) >= cutoff]
+            cutoff = time.time() - self.BASELINE_MAX_AGE
+            fresh = [m for m in new_msgs if _msg_ts(m) >= cutoff]
             if not fresh:
                 return 0
             new_msgs = fresh
@@ -611,7 +626,7 @@ class InstagramInbox:
                 last = msgs[0] if msgs else None
                 last_info = ""
                 if last is not None:
-                    tstamp = getattr(last, "timestamp", 0) or 0
+                    tstamp = _msg_ts(last)
                     when = time.strftime("%H:%M", time.localtime(tstamp)) if tstamp else "?"
                     snippet = (getattr(last, "text", None) or
                                str(getattr(last, "item_type", "?")))[:25]
@@ -637,3 +652,40 @@ class InstagramInbox:
         except Exception:
             pass
         return "\n".join(lines)
+
+    def reprocess_stuck(self) -> str:
+        """پاک‌کردن نشانگر «دیده‌شده» ترد‌های درخواست‌ها/مخفی تا دوباره پردازش شوند.
+
+        برای بازیابی پیام‌هایی که به هر دلیل (مثلاً کرش نسخهٔ قبل) خط‌گذاری
+        شده‌اند ولی هرگز پردازش نشده‌اند. اسکن بعدی آن‌ها را از نو ارزیابی
+        می‌کند (پیام‌های قدیمی‌تر از BASELINE_MAX_AAGE فقط وقتی نشانگرشان
+        پاک شده باشد دوباره بررسی می‌شوند).
+        """
+        try:
+            # بررسی زنده بودن نشست (خروجی لازم نیست؛ فقط خطای زودهنگام)
+            self.client.with_client(lambda cl: cl.user_id)
+        except Exception as e:
+            return f"❌ نشست اینستاگرام پاسخ نداد: {e}"
+        freed = 0
+        for name, fetch in (
+            ("درخواست‌ها", lambda: self.client.with_client(lambda cl: cl.direct_requests(20))),
+            ("مخفی/اسپم", lambda: self.client.with_client(lambda cl: cl.direct_spam_inbox(20))),
+        ):
+            try:
+                threads = fetch()
+            except Exception as e:
+                log.warning("خواندن صندوق %s برای بازیابی ناموفق: %s", name, e)
+                continue
+            for t in threads:
+                tid = str(t.id)
+                if self._seen_row(tid) is not None:
+                    self.engine.d.downloads.db.execute(
+                        "DELETE FROM ig_seen WHERE thread_id=?", (tid,))
+                    freed += 1
+        # نخستین اسکن بعدی نباید این پیام‌ها را «قدیمی» رد کند؛ بنابراین
+        # پرچم baseline را نگه می‌داریم و پیام‌ها به‌صورت عادی پردازش می‌شوند.
+        self.arm_fast_poll()
+        log.info("بازیابی دستی ترد‌های دایرکت: %s مورد آزاد شد", freed)
+        return (f"♻️ بازیابی انجام شد: {freed} گفتگو آزاد شد.\n"
+                "اسکن بعدی (چند ثانیه دیگر) آن‌ها را از نو بررسی و برای کاربران "
+                "متصل‌نشده کد اتصال می‌فرستد.")
