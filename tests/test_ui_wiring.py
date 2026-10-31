@@ -100,6 +100,7 @@ def test_every_static_panel_callback_is_routed():
         "a:subs:menu:", "a:subs:plans:", "a:subs:plan:5", "a:subs:price:5",
         "a:subs:publish:5", "a:subs:pub2:5:future", "a:subs:versions:5",
         "a:subs:archive:5", "a:subs:archive2:5", "a:subs:newplan:",
+        "a:subs:delplan:", "a:subs:del2:5", "a:subs:del3:5", "a:subs:restore:5",
         "a:subs:salesmode:", "a:subs:mode:free", "a:subs:mode:paid",
         "a:subs:sched:", "a:subs:paymethods:", "a:subs:paytoggle:2",
         "a:stats:menu:", "a:stats:dash:", "a:stats:ledger:", "a:stats:users:",

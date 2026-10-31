@@ -22,13 +22,24 @@
   می‌کند و هیچ روشی دیگر بدون گزارش، خالی برنمی‌گردد.
 - خطای معنادار yt-dlp در خط «ERROR:» ابتدای stderr است؛ دنبالهٔ پیام
   فقط بویلرپلیت «گزارش مشکل» است و نباید به کاربر نشان داده شود.
+
+پست‌های «عکس + موزیک» (درخواست کاربر ۲۰۲۶-۱۰-۳۱):
+- اگر پاسخ API video_versions داشته باشد همان ویدیو (عکس+موسیقی یکجا)
+  دانلود می‌شود — این مسیر از قبل درست بود.
+- اگر فقط عکس + فرادادهٔ موزیک باشد (بدون video_versions)، قطعهٔ صوتی از
+  خود پاسخ (مثلاً music_metadata.audio_asset_info.progressive_download_url)
+  گرفته می‌شود و با ffmpeg یک ویدیوی یکپارچه (عکس + موزیک) ساخته می‌شود؛
+  برای کاروسل موزیک‌دار، اسلایدشوی همهٔ عکس‌ها با همان موزیک ساخته می‌شود.
+  اگر ساخت ویدیو ممکن نشد، مثل قبل عکس ارسال می‌شود (رفتار امن).
 """
 from __future__ import annotations
 
 import glob
 import logging
+import re
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -40,10 +51,16 @@ log = logging.getLogger("instagram.content")
 
 MEDIA_EXTS = ("mp4", "jpg", "jpeg", "png", "webp")
 _DOWNLOAD_TIMEOUT = 120  # ثانیه؛ فایل‌های بزرگ CDN
+_FFMPEG_TIMEOUT = 300    # ثانیه؛ ساخت ویدیوی عکس+موزیک
 
 # برندهای ftyp که یعنی فایل HEIC/HEIF/AVIF است (تلگرام عکس قبول نمی‌کند)
 _HEIC_BRANDS = (b"heic", b"heix", b"hevc", b"heim", b"heis", b"mif1", b"msf1",
                 b"avif", b"avis")
+
+# پسوندهای صوتی برای تشخیص URL قطعهٔ موزیک
+_AUDIO_URL_RE = re.compile(r"\.(mp3|m4a|aac|mp4a)(?:\?|$)", re.IGNORECASE)
+# نام فایل‌های کمکی داخل پوشهٔ موقت که رسانه نیستند و نباید ارسال شوند
+_AUX_FILES = {"cookies.txt", "uploader.txt"}
 
 
 def find_media(folder: Path) -> list[Path]:
@@ -191,12 +208,12 @@ def _collect_downloaded(folder: Path) -> list[Path]:
     برای مسیرهایی که فایل را خودِ کتابخانه ذخیره کرده (مثل story_download):
     اگر پسوند فایل با محتوایش نخواند (مثلاً JPEG با نام heic)، به پسوند
     واقعی تغییر می‌یابد تا هم قابل یافتن باشد و هم تلگرام آن را عکس
-    قبول کند. فایل‌های ناقص (.part) و کوکی نادیده گرفته می‌شوند.
+    قبول کند. فایل‌های ناقص (.part) و کمکی (کوکی/آپلودر) نادیده گرفته می‌شوند.
     """
     out: list[Path] = []
     for p in sorted(Path(folder).iterdir()):
         if not p.is_file() or p.name.startswith(".") or p.name.endswith(".part") \
-                or p.name == "cookies.txt":
+                or p.name in _AUX_FILES:
             continue
         real = _sniff_ext(_read_head(p), p.suffix.lower().lstrip("."))
         if real and real != p.suffix.lower().lstrip("."):
@@ -210,7 +227,190 @@ def _collect_downloaded(folder: Path) -> list[Path]:
     return out
 
 
-def download_from_media_dict(media: dict, dest_dir: Path) -> list[Path]:
+# ============================ پست‌های «عکس + موزیک" ============================
+
+def _find_music_audio(node) -> str | None:
+    """یافتن URL قطعهٔ موزیک در پاسخ API (ساختار بین پست‌ها فرق دارد).
+
+    جست‌وجوی بازگشتی؛ فقط URLهایی پذیرفته می‌شوند که «زیر کلید موزیک/صدا»
+    آمده باشند (مثل music_metadata.audio_asset_info.progressive_download_url)
+    یا پسوند صوتی (mp3/m4a/aac) دارند — تا URL ویدیو/عکس اشتباهی گرفته نشود.
+    """
+    hits: list[str] = []
+
+    def walk(n, in_media_ctx: bool) -> None:
+        if len(hits) > 1:
+            return
+        if isinstance(n, dict):
+            for k, v in n.items():
+                kl = str(k).lower()
+                ctx = in_media_ctx or ("music" in kl or "audio" in kl)
+                if isinstance(v, str) and v.startswith("http") and ctx and (
+                        kl in ("progressive_download_url", "download_url", "audio_url", "url")
+                        or _AUDIO_URL_RE.search(v)):
+                    hits.append(v)
+                elif isinstance(v, (dict, list)):
+                    walk(v, ctx)
+        elif isinstance(n, list):
+            for x in n:
+                walk(x, in_media_ctx)
+
+    walk(node, False)
+    return hits[0] if hits else None
+
+
+def _ffprobe(path: Path, entries: str) -> str | None:
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", entries, "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=30,
+        ).stdout.strip()
+        return out or None
+    except Exception:
+        return None
+
+
+def _audio_duration(path: Path) -> float | None:
+    """طول قطعهٔ صوتی به ثانیه (برای تقسیم زمان اسلایدشو)."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=30,
+        ).stdout.strip()
+        return float(out) if out else None
+    except Exception:
+        return None
+
+
+def _media_dims(path: Path) -> tuple[int, int] | None:
+    out = _ffprobe(path, "stream=width,height")
+    if not out:
+        return None
+    try:
+        w, h = out.split(",")[:2]
+        return int(w), int(h)
+    except (ValueError, IndexError):
+        return None
+
+
+def _render_music_video(photo: Path, audio: Path, dest_dir: Path, base: str) -> Path | None:
+    """ساخت ویدیوی «عکس + موزیک» — عکس به‌مدت کل آهنگ + صدا (ffmpeg)."""
+    out = dest_dir / f"{base}_music.mp4"
+    cmd = [
+        "ffmpeg", "-y",
+        "-loop", "1", "-i", str(photo),
+        "-i", str(audio),
+        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
+        "-c:v", "libx264", "-tune", "stillimage",
+        "-c:a", "aac", "-b:a", "192k",
+        "-shortest", "-movflags", "+faststart",
+        str(out),
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_TIMEOUT)
+    except (subprocess.TimeoutExpired, OSError):
+        log.warning("ساخت ویدیوی عکس+موزیک ناموفق (ffmpeg)")
+        return None
+    if proc.returncode != 0 or not out.exists() or out.stat().st_size == 0:
+        log.warning("ffmpeg ویدیوی عکس+موزیک را نساخت: %s",
+                    (proc.stderr or b"")[:200])
+        out.unlink(missing_ok=True)
+        return None
+    return out
+
+
+def _render_slideshow_video(photos: list[Path], audio: Path, dest_dir: Path,
+                            base: str) -> Path | None:
+    """ساخت اسلایدشو (کاروسل موزیک‌دار): همهٔ عکس‌ها + موزیک در یک ویدیو."""
+    dims = [d for d in (_media_dims(p) for p in photos) if d]
+    if not dims:
+        return None
+    w = max(d[0] for d in dims)
+    h = max(d[1] for d in dims)
+    w, h = w + (w % 2), h + (h % 2)  # ابعاد زوج برای x264
+    total = _audio_duration(audio) or (5.0 * len(photos))
+    per = max(2.0, min(15.0, total / len(photos)))
+
+    vf = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+          f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p")
+    segs: list[Path] = []
+    try:
+        for i, p in enumerate(photos):
+            seg = dest_dir / f"{base}_seg{i}.mp4"
+            proc = subprocess.run(
+                ["ffmpeg", "-y", "-loop", "1", "-t", f"{per:.2f}", "-i", str(p),
+                 "-vf", vf, "-c:v", "libx264", "-tune", "stillimage",
+                 "-an", str(seg)],
+                capture_output=True, timeout=_FFMPEG_TIMEOUT,
+            )
+            if proc.returncode != 0 or not seg.exists():
+                return None
+            segs.append(seg)
+        lst = dest_dir / f"{base}_list.txt"
+        lst.write_text("\n".join(f"file '{s.name}'" for s in segs), encoding="utf-8")
+        out = dest_dir / f"{base}_music.mp4"
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
+             "-i", str(audio), "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+             "-shortest", "-movflags", "+faststart", str(out)],
+            capture_output=True, timeout=_FFMPEG_TIMEOUT,
+        )
+        if proc.returncode != 0 or not out.exists() or out.stat().st_size == 0:
+            return None
+        return out
+    except (subprocess.TimeoutExpired, OSError):
+        log.warning("ساخت اسلایدشوی موزیک‌دار ناموفق (ffmpeg)")
+        return None
+    finally:
+        for s in segs:
+            s.unlink(missing_ok=True)
+        (dest_dir / f"{base}_list.txt").unlink(missing_ok=True)
+
+
+def _render_music_item(singles: list[dict], music_url: str, dest_dir: Path,
+                       base: str) -> list[Path] | None:
+    """دانلود عکس(ها)+موزیک و ساخت یک ویدیوی یکپارچه.
+
+    خروجی: [mp4] در صورت موفقیت؛ None یعنی «انجام نشد» و مسیر عادی عکس ادامه می‌یابد.
+    فایل‌های میانی (عکس/صدا) در پایان حذف می‌شوند تا فقط ویدیو ارسال شود.
+    """
+    photo_files: list[Path] = []
+    audio_file: Path | None = None
+    try:
+        audio_file = _fetch_to_file(music_url, dest_dir, f"{base}_audio", "mp3")
+        for idx, item in enumerate(singles, start=1):
+            item = item or {}
+            image_url = _best_url((item.get("image_versions2") or {}).get("candidates"))
+            if not image_url:
+                continue
+            suffix = f"{idx}" if len(singles) > 1 else ""
+            photo_files.append(
+                _fetch_to_file(image_url, dest_dir, f"{base}_img{suffix}", "jpg"))
+        if not audio_file or not photo_files:
+            return None
+        if len(photo_files) == 1:
+            rendered = _render_music_video(photo_files[0], audio_file, dest_dir, base)
+        else:
+            rendered = _render_slideshow_video(photo_files, audio_file, dest_dir, base)
+        if rendered is None:
+            return None
+        log.info("ویدیوی عکس+موزیک ساخته شد: %s (%s عکس)", rendered.name, len(photo_files))
+        return [rendered]
+    except Exception as e:
+        log.warning("ساخت ویدیوی عکس+موزیک ناموفق: %s", e)
+        return None
+    finally:
+        # فایل‌های میانی حذف می‌شوند (فقط ویدیوی نهایی می‌ماند)
+        for p in photo_files:
+            p.unlink(missing_ok=True)
+        if audio_file:
+            audio_file.unlink(missing_ok=True)
+
+
+def download_from_media_dict(media: dict, dest_dir: Path,
+                             meta_out: dict | None = None) -> list[Path]:
     """دانلود رسانه از دیکتهٔ «خام» پاسخ API اینستاگرام.
 
     با هر دو شکل پاسخ کار می‌کند (API خصوصیِ media/{pk}/info/ و API وب) و
@@ -222,6 +422,12 @@ def download_from_media_dict(media: dict, dest_dir: Path) -> list[Path]:
     این تابع پوش‌دهندهٔ هر سه شکل مشکل‌ساز است:
     عکس تکی، ویدیو/ریل، کاروسل، و «آیتم کاروسل» (media_type=8 با
     carousel_media خالی) که قبلاً باعث سکوت کامل می‌شد.
+
+    پست‌های «عکس + موزیک» (بدون video_versions): یک ویدیوی یکپارچه از
+    عکس و موزیک ساخته می‌شود؛ در صورت شکست، عکس خالص ارسال می‌شود.
+
+    meta_out (اختیاری): فرادادهٔ محتوا (username/code سازنده) برای پیام
+    لینک‌های اینستاگرام بعد از تحویل (درخواست کاربر ۲۰۲۶-۱۰-۳۱).
     خروجی: فهرست فایل‌های دانلودشده؛ اگر هیچ فایلی قابل دریافت نباشد
     خطا می‌دهد (هرگز ساکت خالی برنمی‌گردد).
     """
@@ -230,9 +436,25 @@ def download_from_media_dict(media: dict, dest_dir: Path) -> list[Path]:
     username = str((media.get("user") or {}).get("username") or "instagram")
     safe_user = "".join(c if c.isalnum() or c in "._-" else "_" for c in username)[:40]
     pk = str(media.get("pk") or "media")
+    if meta_out is not None:
+        meta_out["username"] = username if username != "instagram" else None
+        meta_out["code"] = media.get("code")
 
     carousel = media.get("carousel_media") or []
     singles = list(carousel) if carousel else [media]
+
+    # ---------- پست «عکس + موزیک»: ساخت ویدیوی یکپارچه ----------
+    # فقط وقتی هیچ آیتمی video_versions ندارد (ویدیو نداریم) و قطعهٔ موزیک
+    # در پاسخ هست، ویدیوی عکس+موزیک ساخته می‌شود؛ در شکست، مسیر عادی ادامه می‌یابد.
+    any_video = bool(_best_url(media.get("video_versions"))) or any(
+        _best_url((it or {}).get("video_versions")) for it in singles
+    )
+    music_url = None if any_video else _find_music_audio(media)
+    if music_url:
+        rendered = _render_music_item(singles, music_url, dest_dir, f"{safe_user}_{pk}")
+        if rendered:
+            return rendered
+        log.warning("ساخت ویدیوی عکس+موزیک ممکن نشد؛ عکس(ها) ساده ارسال می‌شود")
 
     files: list[Path] = []
     for idx, item in enumerate(singles, start=1):
@@ -254,20 +476,38 @@ def download_from_media_dict(media: dict, dest_dir: Path) -> list[Path]:
 
 
 class InstagramContentDownloader:
-    """پیاده‌سازی ContentDownloader برای اینستاگرام."""
+    """پیاده‌سازی ContentDownloader برای اینستاگرام.
+
+    pop_meta(dest_dir): فرادادهٔ آخرین دانلودِ همان پوشه (نام کاربری سازنده)
+    را برمی‌گرداند و پاک می‌کند؛ موتور دانلود از آن برای ارسال پیام
+    «بازکردن پست در اینستاگرام» و لینک صفحهٔ سازنده استفاده می‌کند.
+    """
 
     def __init__(self, client: InstagramClient, proxy: str | None = None):
         self.client = client
         self.proxy = proxy or None
+        self._meta: dict[str, dict] = {}
+        self._meta_lock = threading.Lock()
+
+    def pop_meta(self, dest_dir) -> dict | None:
+        """فرادادهٔ دانلودِ این پوشه را برگردان و حذف کن (یک‌بارمصرف)."""
+        with self._meta_lock:
+            return self._meta.pop(str(dest_dir), None)
+
+    def _store_meta(self, dest_dir, meta: dict) -> None:
+        with self._meta_lock:
+            self._meta[str(dest_dir)] = meta
 
     def download(self, url: str, shortcode: str, dest_dir: Path, kind: str = "post") -> list[Path]:
         dest_dir.mkdir(parents=True, exist_ok=True)
         errors: list[str] = []
         labels = {"_via_instagrapi": "instagrapi", "_via_ytdlp": "yt-dlp"}
         for method in (self._via_instagrapi, self._via_ytdlp):
+            meta: dict = {}
             try:
-                files = method(url, shortcode, dest_dir, kind)
+                files = method(url, shortcode, dest_dir, kind, meta)
                 if files:
+                    self._store_meta(dest_dir, meta)
                     return files
                 # «موفق اما بدون فایل» دیگر سکوت نمی‌کند؛ قبلاً همین حالت
                 # سبب می‌شد شکستِ روش اول کاملاً بی‌صدا قورت داده شود.
@@ -284,11 +524,18 @@ class InstagramContentDownloader:
         return []
 
     # ---------- روش ۱: instagrapi با API خام (محتوای در دسترس اکانت) ----------
-    def _via_instagrapi(self, url: str, shortcode: str, dest_dir: Path, kind: str = "post") -> list[Path]:
+    def _via_instagrapi(self, url: str, shortcode: str, dest_dir: Path, kind: str = "post",
+                         meta: dict | None = None) -> list[Path]:
+        meta = meta if meta is not None else {}
+
         def _do(cl):
             if kind == "story":
                 # استوری: shortcode همان media_id کامل (owner_pk_media_pk) یا pk خام است
                 cl.story_download(shortcode, folder=dest_dir)
+                # نام کاربری سازنده از خود URL استوری (برای پیام لینک‌ها)
+                mt = re.search(r"/stories/([^/]+)/", str(url))
+                if mt:
+                    meta["username"] = mt.group(1)
                 # نرمال‌سازی پسوند واقعی: اینستاگرام URLهای heic با محتوای JPEG
                 # می‌دهد؛ story_download نام فایل را از URL می‌سازد و بدون این
                 # اصلاح، عکس استوری «گم» می‌شد.
@@ -304,19 +551,29 @@ class InstagramContentDownloader:
             if not items:
                 raise RuntimeError(
                     "اینستاگرام اطلاعات این محتوا را نداد (خصوصی/حذف‌شده یا خارج از دسترس اکانت)")
-            return download_from_media_dict(items[0], dest_dir)
+            return download_from_media_dict(items[0], dest_dir, meta_out=meta)
 
         return self.client.with_client(_do)
 
     # ---------- روش ۲: yt-dlp (محتوای عمومی ویدیویی؛ با کوکی نشست ربات) ----------
-    def _via_ytdlp(self, url: str, shortcode: str, dest_dir: Path, kind: str = "post") -> list[Path]:
+    def _via_ytdlp(self, url: str, shortcode: str, dest_dir: Path, kind: str = "post",
+                    meta: dict | None = None) -> list[Path]:
+        meta = meta if meta is not None else {}
+        uploader_file = dest_dir / "uploader.txt"
         args = [
             sys.executable, "-m", "yt_dlp",
             "--no-playlist", "--no-warnings",
             "-f", "bv*[vcodec^=avc1]+ba[ext=m4a]/b[ext=mp4]/b",
             "--merge-output-format", "mp4",
             "-o", str(dest_dir / "%(id)s.%(ext)s"),
+            # نام کاربری سازنده برای پیام لینک‌ها (yt-dlp >= 2023.03)
+            "--print-to-file", "after_move:%(uploader)s", str(uploader_file),
         ]
+        if kind == "story":
+            # برای استوری، نام کاربری از خود URL استوری برداشته می‌شود
+            mt = re.search(r"/stories/([^/]+)/", str(url))
+            if mt:
+                meta["username"] = mt.group(1)
         # کوکی نشست ربات (در صورت وجود) → رفع «empty media response» و 429
         cookie_file = dest_dir / "cookies.txt"
         if self.client.export_cookies(cookie_file):
@@ -333,4 +590,14 @@ class InstagramContentDownloader:
         if proc.returncode != 0:
             stderr = proc.stderr.decode("utf-8", "replace")
             raise RuntimeError(f"yt-dlp شکست خورد: {_ytdlp_reason(stderr)}")
+        # نام سازنده (اگر yt-dlp نوشته باشد) برای پیام لینک‌ها
+        try:
+            if uploader_file.exists():
+                up = uploader_file.read_text(encoding="utf-8").strip()
+                if up and up.upper() != "NA":
+                    meta["username"] = up
+        except OSError:
+            pass
+        finally:
+            uploader_file.unlink(missing_ok=True)
         return find_media(Path(dest_dir))

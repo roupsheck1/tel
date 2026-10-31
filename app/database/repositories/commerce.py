@@ -119,9 +119,20 @@ class PlansRepo:
         self.db.execute("UPDATE plan_versions SET status='archived' WHERE id=?", (version_id,))
 
     def archive_plan(self, plan_id: int) -> bool:
-        """حذف منطقی پلن؛ سوابق تاریخی دست‌نخورده می‌ماند (بخش ۸.۱)."""
+        """حذف منطقی پلن؛ سوابق تاریخی دست‌نخورده می‌ماند (بخش ۸.۱).
+
+        سیاست حذف (درخواست کاربر): مشترکان فعلی پلن خود را تا انقضا نگه
+        می‌دارند (جدول subscriptions دست‌نخورده می‌ماند) و پلن از فهرست
+        خرید کاربران جدید پنهان می‌شود (saleable فقط is_archived=0 می‌دهد).
+        """
         return self.db.execute(
             "UPDATE plans SET is_archived=1 WHERE id=?", (plan_id,)
+        ).rowcount > 0
+
+    def restore_plan(self, plan_id: int) -> bool:
+        """بازگردانی پلن حذف‌شده به فروش (عکسِ archive_plan)."""
+        return self.db.execute(
+            "UPDATE plans SET is_archived=0 WHERE id=?", (plan_id,)
         ).rowcount > 0
 
     def set_order(self, plan_id: int, sort_order: int) -> None:

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import html as _html
 import json
 import logging
 import shutil
@@ -287,6 +288,15 @@ class DownloadEngine:
                 self.d.downloader.download, request["media_url"], request["shortcode"], dest,
                 media_kind,
             )
+            # فرادادهٔ محتوا (نام کاربری سازنده) برای پیام لینک‌های اینستاگرام؛
+            # دانلودرهای فیک (آزمون‌ها) این متد را ندارند → بی‌خطر نادیده گرفته می‌شود
+            content_meta: dict = {}
+            pop_meta = getattr(self.d.downloader, "pop_meta", None)
+            if pop_meta:
+                try:
+                    content_meta = pop_meta(dest) or {}
+                except Exception:
+                    content_meta = {}
             stage_download_end = NOW()
             files = [f for f in files if f and Path(f).exists()]
             if not files:
@@ -320,6 +330,12 @@ class DownloadEngine:
                     ok = await self.d.sender.send(user_id, Path(f))
                     if not ok:
                         raise SendError("ارسال فایل به تلگرام ناموفق بود.", stage="send")
+            # --- لینک‌های اینستاگرام زیر پست (درخواست کاربر ۲۰۲۶-۱۰-۳۱) ---
+            # «بازکردن پست در اینستاگرام» + «بازکردن صفحه سازنده پست» به‌صورت
+            # متن هایپرلینک؛ لینک پست همان لینک اصلی خود پست است (ساخته نمی‌شود).
+            links_text = self._links_message(request, content_meta)
+            if links_text:
+                await self._safe_notify(user_id, links_text)
             # --- موفقیت: شارژ سهمیه و شروع کوچک‌داون طبق سیاست (۱۵.۵ و ۱۵.۱۲) ---
             now = NOW()
             self.d.downloads.set_status(rid, "completed", finished_at=now,
@@ -346,6 +362,28 @@ class DownloadEngine:
             await self._handle_failure(request, DownloadError(str(e), stage="other"), str(dest))
         finally:
             shutil.rmtree(dest, ignore_errors=True)
+
+    def _links_message(self, request, content_meta: dict) -> str | None:
+        """پیام لینک‌های اینستاگرام بعد از تحویل محتوا.
+
+        • لینک پست: همان URL اصلی که کاربر فرستاده (لینک خودِ پست — نه ساختهٔ ربات).
+        • لینک سازنده: آدرس رسمی حساب اینستاگرامِ سازندهٔ پست.
+        هر دو به‌صورت متن فارسی کلیک‌شدنی (HTML hyperlink) هستند.
+        """
+        try:
+            post_url = str(request["media_url"] or "").strip()
+        except (KeyError, IndexError):
+            post_url = ""
+        if not post_url:
+            return None
+        username = str(content_meta.get("username") or "").strip()
+        lines = [f'🔗 <a href="{_html.escape(post_url, quote=True)}">بازکردن پست در اینستاگرام</a>']
+        if username and username.lower() != "instagram":
+            lines.append(
+                f'👤 <a href="{_html.escape(f"https://www.instagram.com/{username}/", quote=True)}">'
+                f"بازکردن صفحه سازنده پست</a>"
+            )
+        return "\n".join(lines)
 
     async def _handle_failure(self, request: dict, err: Exception, dest: str) -> None:
         """سیاست خطا و تلاش مجدد (بخش ۱۵.۱۱ و ۱۵.۱۲).

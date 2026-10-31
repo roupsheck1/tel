@@ -349,7 +349,7 @@ async def subs_plans(cb: CallbackQuery, services: Services, ctx=None):
     for p in plans:
         v = services.plans_repo.current_version(p["id"])
         cfg = services.plan_service.config_of_version(v) if v else None
-        archived = " [بایگانی]" if p["is_archived"] else ""
+        archived = " [حذف‌شده]" if p["is_archived"] else ""
         price = f"{cfg.price:,} تومان" if cfg else "-"
         lines.append(f"• {p['title']} — {price} (نسخه {v['version'] if v else '-'}){archived}")
         kbrows.append([(p["title"], f"a:subs:plan:{p['id']}")])
@@ -382,11 +382,18 @@ async def subs_plan_card(cb: CallbackQuery, services: Services, ctx=None, plan_i
         f"سقف فایل: {cfg.max_file_mb} مگابایت | اولویت: {cfg.priority}",
         f"مشترکان فعال: {services.plans_repo.affected_subscribers(plan_id)}",
     ]
-    kbrows = [
-        [("💰 تغییر قیمت (نسخه جدید)", f"a:subs:price:{plan_id}")],
-        [("📜 نسخه‌ها", f"a:subs:versions:{plan_id}")],
-        [("📦 بایگانی پلن", f"a:subs:archive:{plan_id}")],
-    ]
+    if plan["is_archived"]:
+        lines += ["", "⚠️ این پلن حذف‌شده است: از خرید جدید پنهان است ولی مشترکان فعلی "
+                  "تا پایان اعتبار پلن خود را دارند."]
+        kbrows = [
+            [("♻️ بازگردانی به فروش", f"a:subs:restore:{plan_id}")],
+        ]
+    else:
+        kbrows = [
+            [("💰 تغییر قیمت (نسخه جدید)", f"a:subs:price:{plan_id}")],
+            [("📜 نسخه‌ها", f"a:subs:versions:{plan_id}")],
+            [("🗑 حذف پلن", f"a:subs:archive:{plan_id}")],
+        ]
     if drafts:
         # نکته: append دوآرگومانی TypeError می‌دهد؛ باید از += استفاده کرد
         # (این باگ کارت پلن را وقتی نسخه پیش‌نویس دارد می‌کشت).
@@ -469,9 +476,16 @@ async def subs_versions(cb: CallbackQuery, services: Services, ctx=None):
 async def subs_archive(cb: CallbackQuery, services: Services, ctx=None):
     plan_id = int(cb.data.split(":")[3])
     plan = services.plans_repo.get(plan_id)
+    affected = services.plans_repo.affected_subscribers(plan_id)
     await edit_or_answer(
         cb,
-        f"⚠️ بایگانی «{plan['title']}»؟\nسفارش‌ها و اشتراک‌های تاریخی حفظ می‌شوند و فروش متوقف است.",
+        f"⚠️ حذف «{plan['title']}»؟\n\n"
+        "📌 سیاست حذف پلن:\n"
+        "• مشترکانی که همین حالا این پلن را دارند، پلن‌شان تا زمان انقضا باقی می‌ماند.\n"
+        "• این پلن برای خریداران جدید نمایش داده نمی‌شود (از فهرست خرید پنهان می‌شود).\n"
+        "• سفارش‌ها و سوابق تاریخی حفظ می‌شوند.\n"
+        "• در صورت پشیمانی، از «♻️ بازگردانی» می‌توانی پلن را به فروش برگردانی.\n\n"
+        f"👥 مشترکان فعال فعلی این پلن: {affected} نفر",
         ak.confirm_kb(f"a:subs:archive2:{plan_id}", "a:subs:plans:"),
     )
 
@@ -481,11 +495,93 @@ async def subs_archive(cb: CallbackQuery, services: Services, ctx=None):
 async def subs_archive2(cb: CallbackQuery, services: Services, ctx=None):
     plan_id = int(cb.data.split(":")[3])
     ok = services.plans_repo.archive_plan(plan_id)
-    services.audit_repo.log(ctx.telegram_id, "archive_plan", "plan", str(plan_id),
+    services.audit_repo.log(ctx.telegram_id, "delete_plan", "plan", str(plan_id),
                             result="success" if ok else "noop")
-    await cb.answer("بایگانی شد ✅" if ok else "تغییری نکرد.")
+    await cb.answer("پلن حذف شد ✅ مشترکان فعلی تا انقضا پلن خود را دارند." if ok
+                    else "تغییری نکرد.")
     # بازگشت مستقیم به فهرست پلن‌ها (بدون تغییر cb.data — مدل frozen است)
     await subs_plans(cb, services)
+
+
+# ---------- حذف پلن (زیرمنوی «پلن‌ها و قیمت‌گذاری») ----------
+@router.callback_query(F.data == "a:subs:delplan:")
+@require(PERM_CHANGE_PLAN)
+async def subs_delplan(cb: CallbackQuery, services: Services, ctx=None):
+    """فهرست پلن‌های فعال برای حذف + پلن‌های حذف‌شده برای بازگردانی.
+
+    سیاست حذف (درخواست کاربر): حذف = پنهان‌سازی از خرید جدید؛ مشترکان
+    فعلی پلن خود را تا انقضا نگه می‌دارند و هیچ سوابقی پاک نمی‌شود.
+    """
+    plans = services.plans_repo.list(include_archived=True)
+    if not plans:
+        await edit_or_answer(cb, "پلنی ثبت نشده است.", ak.menu_of("subs"))
+        return
+    lines = ["🗑 حذف پلن — کدام پلن حذف شود؟", "", "📌 سیاست:",
+             "• مشترکان فعلی، پلن‌شان را تا زمان انقضا نگه می‌دارند.",
+             "• پلن برای خریداران جدید نمایش داده نمی‌شود.", ""]
+    kbrows = []
+    for p in plans:
+        if p["is_archived"]:
+            continue
+        affected = services.plans_repo.affected_subscribers(p["id"])
+        lines.append(f"• {p['title']} — {affected} مشترک فعال")
+        kbrows.append([(f"🗑 {p['title']}", f"a:subs:del2:{p['id']}")])
+    deleted = [p for p in plans if p["is_archived"]]
+    if deleted:
+        lines += ["", "♻️ پلن‌های حذف‌شده (قابل بازگردانی):"]
+        for p in deleted:
+            kbrows.append([(f"♻️ {p['title']}", f"a:subs:restore:{p['id']}")])
+    if not kbrows:
+        await edit_or_answer(cb, "پلن فعالی برای حذف وجود ندارد.", ak.menu_of("subs"))
+        return
+    kbrows += ak.nav_rows("a:subs:menu:")
+    await edit_or_answer(cb, "\n".join(lines), ak.kb(kbrows))
+
+
+@router.callback_query(F.data.startswith("a:subs:del2:"))
+@require(PERM_CHANGE_PLAN)
+async def subs_delplan_confirm(cb: CallbackQuery, services: Services, ctx=None):
+    plan_id = int(cb.data.split(":")[3])
+    plan = services.plans_repo.get(plan_id)
+    if not plan:
+        await cb.answer("پلن پیدا نشد.")
+        return
+    affected = services.plans_repo.affected_subscribers(plan_id)
+    await edit_or_answer(
+        cb,
+        f"⚠️ حذف «{plan['title']}»؟\n\n"
+        "📌 سیاست حذف پلن:\n"
+        "• مشترکانی که همین حالا این پلن را دارند، پلن‌شان تا زمان انقضا باقی می‌ماند.\n"
+        "• این پلن برای خریداران جدید نمایش داده نمی‌شود (از فهرست خرید پنهان می‌شود).\n"
+        "• سفارش‌ها و سوابق تاریخی حفظ می‌شوند.\n"
+        "• در صورت پشیمانی، از «♻️ بازگردانی» می‌توانی پلن را به فروش برگردانی.\n\n"
+        f"👥 مشترکان فعال فعلی این پلن: {affected} نفر",
+        ak.confirm_kb(f"a:subs:del3:{plan_id}", "a:subs:delplan:"),
+    )
+
+
+@router.callback_query(F.data.startswith("a:subs:del3:"))
+@require(PERM_CHANGE_PLAN)
+async def subs_delplan_exec(cb: CallbackQuery, services: Services, ctx=None):
+    plan_id = int(cb.data.split(":")[3])
+    plan = services.plans_repo.get(plan_id)
+    ok = services.plans_repo.archive_plan(plan_id) if plan else False
+    services.audit_repo.log(ctx.telegram_id, "delete_plan", "plan", str(plan_id),
+                            result="success" if ok else "noop")
+    await cb.answer("پلن حذف شد ✅ مشترکان فعلی تا انقضا پلن خود را دارند." if ok
+                    else "پلن پیدا نشد.")
+    await subs_delplan(cb, services)
+
+
+@router.callback_query(F.data.startswith("a:subs:restore:"))
+@require(PERM_CHANGE_PLAN)
+async def subs_restore(cb: CallbackQuery, services: Services, ctx=None):
+    plan_id = int(cb.data.split(":")[3])
+    ok = services.plans_repo.restore_plan(plan_id)
+    services.audit_repo.log(ctx.telegram_id, "restore_plan", "plan", str(plan_id),
+                            result="success" if ok else "noop")
+    await cb.answer("پلن به فروش بازگشت ✅" if ok else "تغییری نکرد.")
+    await subs_delplan(cb, services)
 
 
 @router.callback_query(F.data == "a:subs:newplan:")
@@ -800,6 +896,7 @@ _glue(["a:subs:plans:"], lambda cb, state, sv, tg: subs_plans(cb, services=sv))
 _glue(["a:subs:plan:"],
       lambda cb, state, sv, tg: subs_plan_card(cb, services=sv, plan_id=int(tg.rsplit(":", 1)[1])))
 _glue(["a:subs:salesmode:"], lambda cb, state, sv, tg: subs_salesmode(cb, services=sv))
+_glue(["a:subs:delplan:"], lambda cb, state, sv, tg: subs_delplan(cb, services=sv))
 _glue(["a:stats:menu:"], lambda cb, state, sv, tg: stats_menu(cb, services=sv))
 _glue(["a:downloads:menu:"], lambda cb, state, sv, tg: downloads_menu(cb, services=sv))
 _glue(["a:downloads:queue:"], lambda cb, state, sv, tg: downloads_queue(cb, services=sv))

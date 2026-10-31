@@ -15,7 +15,7 @@ def kb(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
 MAIN_MENU = kb([
     [("👥 کاربران", "a:users:menu:")],
     [("💎 مدیریت اشتراک‌ها", "a:subs:menu:")],
-    [("🛍 پلن‌ها و قیمت‌گذاری", "a:subs:plans:")],
+    [("🛍 پلن‌ها و قیمت‌گذاری", "a:subs:menu:")],
     [("🧾 سفارش‌ها و پرداخت‌ها", "a:orders:menu:")],
     [("📊 آمار و گزارش‌ها", "a:stats:menu:")],
     [("📥 مدیریت دانلودها", "a:downloads:menu:")],
@@ -58,6 +58,7 @@ def menu_of(section: str) -> InlineKeyboardMarkup:
             [("➕ پلن جدید", "a:subs:newplan:")],
             [("💰 حالت فروش", "a:subs:salesmode:")],
             [("💳 روش‌های پرداخت", "a:subs:paymethods:")],
+            [("🗑 حذف پلن", "a:subs:delplan:")],
         ],
         "stats": [
             [("📈 داشبورد کلی", "a:stats:dash:")],

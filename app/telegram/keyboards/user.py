@@ -16,7 +16,9 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         [KeyboardButton(text="🆘 راهنما")],
     ],
     resize_keyboard=True,
-    is_persistent=True,
+    # is_persistent=False: منو «همیشه باز» نمی‌ماند؛ دکمه برگشت گوشی آن را
+    # جمع می‌کند تا کاربر پیام‌های ربات را کامل ببیند (درخواست کاربر).
+    is_persistent=False,
 )
 
 
@@ -33,7 +35,8 @@ def main_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
     ]
     if is_admin:
         rows.append([KeyboardButton(text=ADMIN_PANEL_BUTTON)])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
+    # is_persistent=False → منو با دکمهٔ برگشت گوشی جمع می‌شود (نه فقط با chevron)
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=False)
 
 
 def plans_keyboard(plans: list[dict]) -> InlineKeyboardMarkup:
