@@ -684,6 +684,7 @@ async def health_menu(cb: CallbackQuery, services: Services, ctx=None):
     if inbox:
         lines.append(f"📸 اینستاگرام: {'متصل ✅' if inbox.get('ready') else 'قطع ❌'}"
                      f" | آخرین اسکن: {ts_fa(inbox.get('last_scan_at'))}"
+                     + (f" | پول سریع: {'فعال ⚡' if inbox.get('fast_poll') else 'خاموش'}")
                      + (f" | خطا: {inbox['last_error'][:40]}" if inbox.get("last_error") else ""))
         lines.append(f"🤖 تلگرام: فعال ✅")
     await edit_or_answer(cb, "\n".join(lines), ak.menu_of("health"))

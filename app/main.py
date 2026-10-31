@@ -103,9 +103,15 @@ async def run() -> None:
         ig_client, services.links_repo, engine,
         loop_holder=asyncio.get_running_loop(),
         poll_min=cfg.ig_poll_min, poll_max=cfg.ig_poll_max,
+        fast_poll_min=cfg.ig_fast_poll_min, fast_poll_max=cfg.ig_fast_poll_max,
+        fast_window=cfg.ig_fast_window,
     )
     # سلامت اینستاگرام برای مرکز سلامت (بخش ۲۰.۱)
     services.inbox_health = inbox.health  # type: ignore[attr-defined]
+    # فعال‌سازی پول سریع از هندلر /connect (کد سریع‌تر برسد)
+    services.ig_fastpoll = inbox.arm_fast_poll  # type: ignore[attr-defined]
+    # گزارش دیاگنوستیک برای مدیران (/igdebug)
+    services.ig_debug = inbox.debug_report  # type: ignore[attr-defined]
 
     dp = build_dispatcher(services)
 

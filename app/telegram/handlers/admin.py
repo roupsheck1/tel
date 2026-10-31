@@ -68,6 +68,36 @@ async def msg_open_panel(message: Message, state: FSMContext, services: Services
     await _open_panel(message, services, state)
 
 
+@router.message(Command("igdebug"))
+async def cmd_igdebug(message: Message, services: Services):
+    """دیاگ اینستاگرام برای مدیر: وضعیت سه صندوق دایرکت + کدهای اخیر.
+
+    عیب‌یابی «کد اتصال نمی‌رسد»: نشان می‌دهد پیام کاربر کدام صندوق
+    (عادی/درخواست‌ها/مخفی) افتاده و پردازش شده یا نه.
+    """
+    import asyncio
+
+    ctx = services.permissions.context_of(message.from_user.id)
+    if not ctx:
+        return  # برای غیرمدیرها هیچ پاسخی نمی‌دهیم
+    diag = getattr(services, "ig_debug", None)
+    if not callable(diag):
+        await message.reply("ابزار دیاگ اینستاگرام آماده نیست (سرویس را ری‌استارت کن).")
+        return
+    note = await message.reply("🔍 در حال بررسی صندوق‌های اینستاگرام… چند ثانیه صبر کن.")
+    try:
+        # instagrapi همگام است؛ در نخ جداگانه تا حلقهٔ تلگرام بلاک نشود
+        report = await asyncio.to_thread(diag)
+    except Exception as e:
+        await note.edit_text(f"❌ خطای دیاگ اینستاگرام: {e}")
+        return
+    text = report if len(report) < 3900 else report[:3900] + "\n…"
+    try:
+        await note.edit_text(text)
+    except Exception:
+        await message.reply(text)
+
+
 # نکته: دکمه‌های منو «a:home:» می‌فرستند (قالب عمومی callback های پنل)؛
 # هر دو شکل (با و بدون دونقطه پایانی) پذیرفته می‌شود تا هیچ دکمه‌ای بی‌پاسخ نماند.
 @router.callback_query(F.data.in_({"a:home", "a:home:"}))

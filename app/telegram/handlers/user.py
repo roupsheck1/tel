@@ -56,8 +56,21 @@ async def cmd_help(message: Message, services: Services):
     await message.reply(services.settings.get("text.help"))
 
 
+def _arm_fast_poll(services: Services) -> None:
+    """فعال‌سازی پنجرهٔ پول سریع دایرکت (اگر سیم‌کشی شده باشد)."""
+    arm = getattr(services, "ig_fastpoll", None)
+    if callable(arm):
+        try:
+            arm()
+        except Exception:
+            pass
+
+
 @router.message(Command("connect"))
+@router.message(F.text == "🔗 اتصال اینستاگرام")
 async def cmd_connect(message: Message, services: Services):
+    # کاربر می‌خواهد وصل کند؛ به‌زودی در اینستاگرام پیام می‌دهد — پول سریع
+    _arm_fast_poll(services)
     link = services.links_repo.get_active(message.from_user.id)
     if link:
         await message.reply(
@@ -65,11 +78,18 @@ async def cmd_connect(message: Message, services: Services):
             "برای قطع اتصال /unlink را بفرست."
         )
         return
+    ig_user = (services.settings.get("bot.ig_username", "") or "").strip()
+    page_line = ""
+    if ig_user:
+        page_line = (f'1️⃣ در اینستاگرام <a href="https://instagram.com/{ig_user}">پیج ربات (@{ig_user})</a>'
+                     " را باز کن و یک پیام بفرست (مثلاً «سلام»)\n")
+    else:
+        page_line = "1️⃣ در اینستاگرام به پیج ربات یک پیام بفرست (مثلاً «سلام»)\n"
     await message.reply(
         "🔗 اتصال اینستاگرام\n"
         "برای وصل‌کردن حسابت، این ۳ مرحله را به‌ترتیب انجام بده:\n"
-        "1️⃣ در اینستاگرام به پیج ربات یک پیام بفرست (مثلاً «سلام»)\n"
-        "2️⃣ یک کد ۶ رقمی در دایرکت می‌گیری\n"
+        + page_line +
+        "2️⃣ یک کد ۶ رقمی در همان دایرکت می‌گیری (معمولاً کمتر از ۱ دقیقه)\n"
         "3️⃣ همان کد را همین‌جا بفرست تا حسابت وصل شود"
     )
 
@@ -256,6 +276,9 @@ async def free_text(message: Message, state: FSMContext, services: Services):
                 "حالا پست یا ریلز را در دایرکت اینستاگرام برای پیج ربات بفرست."
             )
         else:
+            # کاربر در حال تلاش برای اتصال است؛ پول سریع فعال شود تا کد تازه
+            # که در اینستاگرام می‌گیرد سریع ارسال شود
+            _arm_fast_poll(services)
             await message.reply(
                 f"❌ {result}\n\n"
                 "راهنما: فقط «آخرین کد» که در دایرکت اینستاگرام گرفته‌ای معتبر است "
@@ -284,6 +307,7 @@ async def free_text(message: Message, state: FSMContext, services: Services):
         await message.reply(services.settings.get("text.help"))
         return
     if text == "🔗 اتصال اینستاگرام":
+        # این مسیر وقتی رخ می‌دهد که فیلتر دکمه روی روتر کاربر فعال نباشد
         await cmd_connect(message, services)
         return
 

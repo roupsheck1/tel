@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     # --- پایش دایرکت ---
     ig_poll_min: int = Field(default=30, alias="IG_POLL_MIN")
     ig_poll_max: int = Field(default=60, alias="IG_POLL_MAX")
+    # پول سریع: پنجره‌ای پس از درخواست اتصال کاربر که صندوق سریع‌تر چک می‌شود
+    ig_fast_poll_min: int = Field(default=6, alias="IG_FAST_POLL_MIN")
+    ig_fast_poll_max: int = Field(default=9, alias="IG_FAST_POLL_MAX")
+    ig_fast_window: int = Field(default=600, alias="IG_FAST_WINDOW")
 
     @field_validator("admin_ids", mode="before")
     @classmethod
@@ -97,6 +101,8 @@ class Settings(BaseSettings):
             errors.append("حداقل یک شناسه مدیر در ADMIN_IDS لازم است.")
         if self.ig_poll_min < 5:
             errors.append("IG_POLL_MIN نباید کمتر از ۵ ثانیه باشد (پایداری اکانت).")
+        if self.ig_fast_poll_min < 3:
+            errors.append("IG_FAST_POLL_MIN نباید کمتر از ۳ ثانیه باشد (پایداری اکانت).")
         return errors
 
 
